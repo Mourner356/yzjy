@@ -48516,3 +48516,184 @@ html.phone-night .msg-wrapper .lt-switch-tip{background:rgba(140,212,240,0.10) !
 })();
 </script>
 <!-- ============ 角色主动发消息 结束 ============ -->
+<!-- ============ 角色主动发照片永久保存与状态回显修复补丁 ============ -->
+<script id="phoneProactivePhotoFixJs">
+(function () {
+  'use strict';
+
+  var S = function () { return window.__state || {}; };
+  var DB = function () { return window.__db; };
+  function $(id) { return document.getElementById(id); }
+  function getChar(id) { return (S().characters || []).find(function (c) { return c.id === id; }); }
+
+  async function saveCharDirect(c) {
+    if (!c) return;
+    try {
+      if (DB() && DB().characters) {
+        await DB().characters.put(JSON.parse(JSON.stringify(c)));
+      }
+    } catch (e) {
+      console.warn('[主动发图] 保存角色失败:', e);
+    }
+  }
+
+  // ---------- 1. 确保并渲染主动发图设置区域 ----------
+  function syncPhotoSettingUI(charId) {
+    var page = document.querySelector('#char-editor-page .scroll-content');
+    if (!page) return;
+
+    var group = $('v69Group');
+    if (!group) {
+      group = document.createElement('div');
+      group.className = 'setting-group';
+      group.id = 'v69Group';
+      group.innerHTML =
+        '<div class="group-title">📷 主动发图片</div>' +
+        '<div class="setting-row">' +
+          '<label>是否允许角色主动发图片</label>' +
+          '<select id="v69On">' +
+            '<option value="0">否</option>' +
+            '<option value="1">是</option>' +
+          '</select>' +
+        '</div>' +
+        '<div id="v69Sub" style="display:none;">' +
+          '<div class="setting-row">' +
+            '<label>① 允许主动发本人出镜照片（自拍）</label>' +
+            '<select id="v69Self">' +
+              '<option value="0">不允许</option>' +
+              '<option value="1">允许</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="setting-row">' +
+            '<label>② 允许主动发不含本人的照片（景色/日常/美食等）</label>' +
+            '<select id="v69Other">' +
+              '<option value="0">不允许</option>' +
+              '<option value="1">允许</option>' +
+            '</select>' +
+          '</div>' +
+          '<div style="font-size:12px;color:var(--text-secondary,#7a9aaa);line-height:1.6;margin-top:4px;">' +
+            '设置后将永久保存。不允许自拍时，角色绝不会主动发任何含本人的照片。' +
+          '</div>' +
+        '</div>';
+
+      // 插入在锁脸区域上方
+      var lock = $('lockfaceGrid');
+      var lockGroup = lock ? lock.closest('.setting-group') : null;
+      if (lockGroup) page.insertBefore(group, lockGroup);
+      else page.appendChild(group);
+    }
+
+    // 从真实角色数据中回填（彻底解决回显失败导致被覆盖的 bug）
+    var c = charId ? getChar(charId) : null;
+    var onVal = (c && c.imgOn) ? '1' : '0';
+    var selfVal = (c && c.imgSelf) ? '1' : '0';
+    var otherVal = (c && c.imgOther) ? '1' : '0';
+
+    var onSel = $('v69On');
+    var selfSel = $('v69Self');
+    var otherSel = $('v69Other');
+    var subBox = $('v69Sub');
+
+    if (onSel) onSel.value = onVal;
+    if (selfSel) selfSel.value = selfVal;
+    if (otherSel) otherSel.value = otherVal;
+    if (subBox) subBox.style.display = (onVal === '1') ? 'block' : 'none';
+
+    // 绑定即时监听：用户一旦切换，立即在后台自动永久保存
+    if (onSel && !onSel.__boundAutoSave) {
+      onSel.__boundAutoSave = true;
+      onSel.addEventListener('change', function () {
+        if (subBox) subBox.style.display = (onSel.value === '1') ? 'block' : 'none';
+        autoSaveCurrent();
+      });
+    }
+    if (selfSel && !selfSel.__boundAutoSave) {
+      selfSel.__boundAutoSave = true;
+      selfSel.addEventListener('change', autoSaveCurrent);
+    }
+    if (otherSel && !otherSel.__boundAutoSave) {
+      otherSel.__boundAutoSave = true;
+      otherSel.addEventListener('change', autoSaveCurrent);
+    }
+  }
+
+  // 自动存盘辅助函数
+  function autoSaveCurrent() {
+    var curCharId = ($('editCharId') || {}).value || '';
+    if (!curCharId) return; // 新建角色尚未分配 id，留待点击保存时写入
+    var c = getChar(curCharId);
+    if (!c) return;
+
+    var onSel = $('v69On');
+    var selfSel = $('v69Self');
+    var otherSel = $('v69Other');
+
+    c.imgOn = onSel ? (onSel.value === '1') : false;
+    c.imgSelf = selfSel ? (selfSel.value === '1') : false;
+    c.imgOther = otherSel ? (otherSel.value === '1') : false;
+
+    saveCharDirect(c);
+  }
+
+  // ---------- 2. 挂钩 openCharEditor：打开人设编辑时必须正确回显 ----------
+  if (typeof window.openCharEditor === 'function') {
+    var origOpenEditor = window.openCharEditor;
+    window.openCharEditor = function (id) {
+      var r = origOpenEditor.apply(this, arguments);
+      setTimeout(function () {
+        syncPhotoSettingUI(id);
+      }, 50);
+      return r;
+    };
+  }
+
+  // 新建人设时重置为默认关闭
+  document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('#newCharBtn')) {
+      setTimeout(function () {
+        syncPhotoSettingUI(null);
+      }, 70);
+    }
+  }, true);
+
+  // ---------- 3. 挂钩保存按钮：无论何时保存，都强制带上主动发图配置 ----------
+  document.addEventListener('click', function (e) {
+    if (!(e.target.closest && e.target.closest('#charEditorSave'))) return;
+
+    var beforeId = ($('editCharId') || {}).value || '';
+    var beforeName = (($('editCharName') || {}).value || '').trim();
+
+    var onSel = $('v69On');
+    var selfSel = $('v69Self');
+    var otherSel = $('v69Other');
+
+    var isImgOn = onSel ? (onSel.value === '1') : false;
+    var isImgSelf = selfSel ? (selfSel.value === '1') : false;
+    var isImgOther = otherSel ? (otherSel.value === '1') : false;
+
+    // 多重延时确保覆盖所有并发保存逻辑
+    [100, 380, 750].forEach(function (delay) {
+      setTimeout(async function () {
+        var c = beforeId ? getChar(beforeId)
+          : (S().characters || []).filter(function (x) { return x.name === beforeName; })
+              .sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); })[0];
+        if (!c) return;
+
+        c.imgOn = isImgOn;
+        c.imgSelf = isImgSelf;
+        c.imgOther = isImgOther;
+
+        await saveCharDirect(c);
+      }, delay);
+    });
+  }, true);
+
+  // 页面就绪时初始化一次
+  setTimeout(function () {
+    var id = ($('editCharId') || {}).value || '';
+    syncPhotoSettingUI(id || null);
+  }, 600);
+
+})();
+</script>
+<!-- ============ 主动发照片永久保存补丁 结束 ============ -->
