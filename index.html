@@ -47855,3 +47855,664 @@ html.phone-night .msg-wrapper .lt-switch-tip{background:rgba(140,212,240,0.10) !
 })();
 </script>
 <!-- ============ 补丁结束 ============ -->
+<!-- ============ 应用商城/工作区：.aiapp 文件一键导出与导入升级补丁 ============ -->
+<style id="phoneAppFileShareCss">
+  .as-share-box { text-align: left; }
+  .as-share-btn-main {
+    width: 100%; padding: 13px 0; border: none; border-radius: 14px;
+    background: var(--text-primary, #2c2c2e); color: #fff;
+    font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+    margin-bottom: 12px; display: flex; align-items: center; justify-content: center; gap: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+  }
+  .as-share-btn-main:active { opacity: 0.85; transform: scale(0.98); }
+  .as-share-btn-ghost {
+    width: 100%; padding: 10px 0; border: 1px solid rgba(0,0,0,0.12); border-radius: 12px;
+    background: rgba(0,0,0,0.04); color: var(--text-primary, #2c2c2e);
+    font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+  }
+  .as-import-file-btn {
+    width: 100%; padding: 14px 0; border: 2px dashed rgba(0,0,0,0.18); border-radius: 14px;
+    background: rgba(140,212,240,0.15); color: var(--text-primary, #2c2c2e);
+    font-size: 14.5px; font-weight: 700; cursor: pointer; font-family: inherit;
+    display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 14px;
+  }
+  .as-import-file-btn:active { background: rgba(140,212,240,0.3); }
+  html.phone-night .as-share-btn-main, html.phone-dark .as-share-btn-main { background: #e9ebef; color: #14161a; }
+  html.phone-night .as-import-file-btn, html.phone-dark .as-import-file-btn { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color: #eceef2; }
+</style>
+
+<script id="phoneAppFileShareJs">
+(function () {
+  'use strict';
+
+  var S = function () { return window.__state || {}; };
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function toast(t, b, ok, cb) { if (window.showModal) window.showModal(t, b, ok || '好的', cb); }
+
+  function getBridge() { return window.__asBridge || null; }
+
+  // ---------- 1. 将应用打包为标准应用对象包 ----------
+  function packApp(appObj) {
+    return {
+      _fmt: 'yzj-aiapp-file',
+      _v: 1,
+      appVersion: '一只机应用',
+      exportedAt: new Date().toISOString(),
+      name: String(appObj.name || '未命名应用').slice(0, 16),
+      icon: appObj.icon || 'default',
+      iconPath: appObj.iconPath || '',
+      desc: String(appObj.desc || '').slice(0, 80),
+      features: Array.isArray(appObj.features) ? appObj.features.slice(0, 8) : [],
+      about: String(appObj.about || '').slice(0, 400),
+      needApi: appObj.needApi === true,
+      html: String(appObj.html || ''),
+      want: String(appObj.want || '').slice(0, 200)
+    };
+  }
+
+  // ---------- 2. 导出下载 .aiapp 文件 ----------
+  function downloadAppFile(appObj) {
+    try {
+      var pack = packApp(appObj);
+      var blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      var safeName = (appObj.name || '应用').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 16);
+      a.href = url;
+      a.download = '一只机应用_' + safeName + '_' + Date.now() + '.aiapp';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2500);
+      toast('已下载应用文件 📦', '「' + esc(appObj.name) + '」已导出为 <b>.aiapp</b> 文件。<br>可直接在微信/QQ把文件发给朋友，对方在应用商店点「导入」即可一键安装。');
+    } catch (e) {
+      toast('导出失败', (e && e.message) ? esc(e.message) : '生成文件时出错了');
+    }
+  }
+
+  // ---------- 3. 增强版分享弹窗（支持文件下载 + 文本码） ----------
+  function openShareDialog(appObj) {
+    if (!appObj || !window.showModal) return;
+    var b = getBridge();
+    var legacyCode = b ? b.makeShare(appObj) : '';
+
+    var body =
+      '<div class="as-share-box">' +
+        '<div style="font-size:12.5px;color:var(--text-secondary,#8e8e93);line-height:1.75;margin-bottom:12px;">' +
+          '推荐直接<b>下载 .aiapp 文件</b>，通过微信/QQ等直接发文件给好友，对方一键选文件就能导入：' +
+        '</div>' +
+        '<button class="as-share-btn-main" id="asExportFileBtn">' +
+          '📥 下载应用文件 (.aiapp)' +
+        '</button>' +
+        '<details style="margin-top:14px;">' +
+          '<summary style="font-size:12px;color:var(--text-secondary,#8e8e93);cursor:pointer;user-select:none;">' +
+            '或者：查看传统文本分享码' +
+          '</summary>' +
+          '<textarea id="asLegacyShareText" readonly rows="4" style="width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,0.1);border-radius:10px;padding:8px 10px;font-size:11px;font-family:ui-monospace,Menlo,monospace;margin-top:8px;line-height:1.5;resize:vertical;">' + esc(legacyCode) + '</textarea>' +
+          '<button class="as-share-btn-ghost" id="asCopyTextBtn" style="margin-top:8px;">📋 复制长文本分享码</button>' +
+        '</details>' +
+      '</div>';
+
+    window.showModal('分享「' + esc(appObj.name || '应用') + '」', body, '完成', null, false);
+
+    setTimeout(function () {
+      var expBtn = $('asExportFileBtn');
+      if (expBtn) expBtn.onclick = function () { downloadAppFile(appObj); };
+
+      var copyBtn = $('asCopyTextBtn');
+      var txtEl = $('asLegacyShareText');
+      if (copyBtn && txtEl) {
+        copyBtn.onclick = function () {
+          var code = txtEl.value;
+          try {
+            txtEl.select();
+            document.execCommand('copy');
+            toast('已复制', '长文本分享码已复制到剪贴板。');
+          } catch (e) {
+            if (navigator.clipboard) {
+              navigator.clipboard.writeText(code).then(function () {
+                toast('已复制', '长文本分享码已复制到剪贴板。');
+              });
+            }
+          }
+        };
+      }
+    }, 40);
+  }
+
+  // ---------- 4. 增强版导入流程（支持文件选择 + 文本粘贴） ----------
+  function openImportDialog() {
+    if (!window.showModal) return;
+
+    var body =
+      '<div class="as-share-box">' +
+        '<button class="as-import-file-btn" id="asPickFileInputBtn">' +
+          '📁 从手机选择 .aiapp 文件导入' +
+        '</button>' +
+        '<input type="file" id="asHiddenFileInput" accept=".aiapp,.json,application/json,text/plain,*/*" style="display:none;">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin:12px 0 10px;color:var(--text-secondary,#8e8e93);font-size:12px;">' +
+          '<span style="flex:1;height:1px;background:rgba(0,0,0,0.08);"></span>' +
+          '<span>或粘贴文本分享码</span>' +
+          '<span style="flex:1;height:1px;background:rgba(0,0,0,0.08);"></span>' +
+        '</div>' +
+        '<textarea id="asImpTextInput" rows="4" placeholder="在此粘贴别人分享的文本码（以 AIAPP1. 开头）" ' +
+          'style="width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,0.12);border-radius:10px;padding:9px 11px;font-size:11px;font-family:ui-monospace,Menlo,monospace;line-height:1.5;resize:vertical;"></textarea>' +
+      '</div>';
+
+    window.showModal('导入应用', body, '从文本导入', function () {
+      var txtEl = $('asImpTextInput');
+      var code = (txtEl && txtEl.value || '').trim();
+      if (!code) return;
+      processImportContent(code);
+    }, true);
+
+    setTimeout(function () {
+      var pickBtn = $('asPickFileInputBtn');
+      var fileInp = $('asHiddenFileInput');
+      if (pickBtn && fileInp) {
+        pickBtn.onclick = function () { fileInp.click(); };
+        fileInp.onchange = function (ev) {
+          var f = ev.target.files && ev.target.files[0];
+          if (!f) return;
+          var reader = new FileReader();
+          reader.onload = function (e2) {
+            var rawText = e2.target.result;
+            if (window.closeModal) window.closeModal();
+            processImportContent(rawText);
+          };
+          reader.readAsText(f);
+          fileInp.value = '';
+        };
+      }
+    }, 40);
+  }
+
+  // 统一解析并上架应用（兼顾 .aiapp 文件、JSON 文件与传统 base64 文本码）
+  function processImportContent(raw) {
+    var b = getBridge();
+    if (!b) { toast('提示', '商城模块未就绪'); return; }
+    var one = null;
+
+    // 1) 尝试作为直接 JSON (.aiapp 文件内容) 解析
+    try {
+      var j = JSON.parse(raw.trim());
+      if (j && (j.html || (j._fmt && j.name))) {
+        one = {
+          name: String(j.name || '未命名').slice(0, 12),
+          icon: b.ICONS[String(j.icon || '').trim()] ? String(j.icon).trim() : 'default',
+          iconPath: b.cleanIconPath ? b.cleanIconPath(j.iconPath || '') : '',
+          desc: String(j.desc || '').slice(0, 80),
+          features: Array.isArray(j.features) ? j.features.map(function (x) { return String(x).slice(0, 60); }).filter(Boolean).slice(0, 8) : [],
+          about: String(j.about || '').slice(0, 400),
+          needApi: j.needApi === true,
+          html: String(j.html || ''),
+          want: String(j.want || '').slice(0, 200)
+        };
+      }
+    } catch (e) {}
+
+    // 2) 如果不是普通 JSON，尝试作为 AIAPP1. 传统分享码解析
+    if (!one) {
+      try {
+        one = b.parseShare(raw);
+      } catch (err) {
+        toast('导入失败', (err && err.message) ? esc(err.message) : '文件内容无法识别，请确保是合法的应用文件。');
+        return;
+      }
+    }
+
+    if (!one || !one.html || one.html.length < 50) {
+      toast('导入失败', '应用文件中未包含有效的代码。');
+      return;
+    }
+
+    var sh = b.shelf();
+    var dup = sh.filter(function (x) { return x.html === one.html; })[0];
+    if (dup) {
+      toast('应用已存在', '货架上已经有内容完全相同的应用「' + esc(dup.name) + '」。');
+      return;
+    }
+
+    var names = sh.map(function (x) { return x.name; });
+    var nm = one.name;
+    if (names.indexOf(nm) >= 0) nm = (nm + ' 导入').slice(0, 12);
+
+    var newApp = {
+      id: b.uid(), name: nm, icon: one.icon, iconPath: one.iconPath,
+      desc: one.desc, features: one.features, about: one.about,
+      needApi: one.needApi, html: one.html, want: one.want,
+      tone: 'default', createdAt: Date.now(), imported: true
+    };
+    sh.push(newApp);
+    b.saveShelf(sh);
+    b.refreshStore();
+    b.refreshDesk();
+
+    toast('🎉 导入成功！', '「' + esc(nm) + '」已放入你的应用商城货架，随时可以在商城中点击「下载」安装到桌面。');
+  }
+
+  // ---------- 5. 顶层拦截替换旧的分享与导入入口 ----------
+  document.addEventListener('click', function (e) {
+    // 拦截商城详情页里的「分享给别人」按钮
+    var shareBtn = e.target.closest && e.target.closest('#asShare');
+    if (shareBtn) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      var b = getBridge();
+      // 获取当前正在浏览的应用 ID
+      var body = $('asBody');
+      var detailTitle = $('asTitle') ? $('asTitle').textContent : '';
+      var curApp = b ? b.shelf().filter(function (a) { return a.name === detailTitle; })[0] : null;
+      if (curApp) openShareDialog(curApp);
+      return;
+    }
+
+    // 拦截商城首页里的「导入别人分享的应用」入口
+    var importEntry = e.target.closest && e.target.closest('#asImport');
+    if (importEntry) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      openImportDialog();
+      return;
+    }
+
+    // 拦截工作区项目详情里的「分享给别人」按钮
+    var wsShareBtn = e.target.closest && e.target.closest('#wsShare');
+    if (wsShareBtn) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      var wsTitle = $('wsTitle') ? $('wsTitle').textContent : '';
+      var wsList = [];
+      try { wsList = JSON.parse(localStorage.getItem('phone_ws_v1') || '[]'); } catch (er) {}
+      var curWs = wsList.filter(function (p) { return p.name === wsTitle; })[0] || null;
+      if (curWs && curWs.html) openShareDialog(curWs);
+      return;
+    }
+  }, true);
+
+})();
+</script>
+<!-- ============ 应用文件直传补丁 结束 ============ -->
+<!-- ============ 角色主动发微信消息 · 剧情智能判定与冷却系统 ============ -->
+<style id="phoneProactiveMsgCss">
+  #proactiveMsgGroup .pm-tip { font-size: 12px; color: var(--text-secondary, #7a9aaa); line-height: 1.65; margin-top: 4px; }
+  html.phone-night #proactiveMsgGroup .pm-tip,
+  html.phone-dark #proactiveMsgGroup .pm-tip { color: #9aa0ab; }
+</style>
+
+<script id="phoneProactiveMsgJs">
+(function () {
+  'use strict';
+
+  var S = function () { return window.__state || {}; };
+  var DB = function () { return window.__db; };
+  function $(id) { return document.getElementById(id); }
+  function uid() { return (window.uid ? window.uid() : (Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7))); }
+  function getChar(id) { return (S().characters || []).find(function (c) { return c.id === id; }); }
+  function getChat(id) { return (S().chats || []).find(function (c) { return c.id === id; }); }
+  function getUser(id) { return (S().users || []).find(function (u) { return u.id === id; }); }
+  async function saveChar(c) { try { if (DB() && DB().characters) await DB().characters.put(JSON.parse(JSON.stringify(c))); } catch (e) {} }
+
+  function chatApi() {
+    var s = S();
+    var apis = s.apiConfigs || [];
+    var a = apis.find(function (x) { return x.type === 'chat' && x.id === s.currentChatApiId; }) ||
+            apis.find(function (x) { return x.type === 'chat'; });
+    return (a && a.url && a.key) ? { url: String(a.url).replace(/\/+$/, ''), key: a.key, model: a.model || 'gpt-3.5-turbo' } : null;
+  }
+
+  // ---------- 1. 角色编辑页面：注入配置 UI ----------
+  function injectSettingUI() {
+    var page = document.querySelector('#char-editor-page .scroll-content');
+    if (!page || $('proactiveMsgGroup')) return;
+
+    var id = ($('editCharId') || {}).value || '';
+    var c = id ? getChar(id) : null;
+    var enabled = c ? (c.proactiveMsg === true) : false;
+    var cdVal = c ? (c.proactiveMsgCd != null ? String(c.proactiveMsgCd) : '5') : '5';
+
+    var group = document.createElement('div');
+    group.className = 'setting-group';
+    group.id = 'proactiveMsgGroup';
+    group.innerHTML =
+      '<div class="group-title">💬 主动发消息</div>' +
+      '<div class="setting-row">' +
+        '<label>允许 TA 主动发微信消息</label>' +
+        '<select id="editCharProactiveMsg">' +
+          '<option value="0"' + (!enabled ? ' selected' : '') + '>关闭（只在收到消息时回复）</option>' +
+          '<option value="1"' + (enabled ? ' selected' : '') + '>开启（按人设与剧情主动发）</option>' +
+        '</select>' +
+      '</div>' +
+      '<div id="proactiveMsgSub" style="' + (enabled ? '' : 'display:none;') + '">' +
+        '<div class="setting-row">' +
+          '<label>主动发消息冷却间隔</label>' +
+          '<select id="editCharProactiveCd">' +
+            '<option value="5"' + (cdVal === '5' ? ' selected' : '') + '>5 分钟</option>' +
+            '<option value="10"' + (cdVal === '10' ? ' selected' : '') + '>10 分钟</option>' +
+            '<option value="30"' + (cdVal === '30' ? ' selected' : '') + '>30 分钟</option>' +
+            '<option value="60"' + (cdVal === '60' ? ' selected' : '') + '>1 小时</option>' +
+            '<option value="0"' + (cdVal === '0' ? ' selected' : '') + '>不限制（完全由剧情与处境判定）</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="pm-tip">' +
+          '根据需要选择冷却或者不限制，不限制是剧情判定' +
+        '</div>' +
+      '</div>';
+
+    // 插入在「主动来电」或「拉黑状态」附近
+    var refRow = $('editCharCallCd') ? $('editCharCallCd').closest('.setting-row') : null;
+    var refGroup = refRow ? refRow.closest('.setting-group') : null;
+    if (refGroup && refGroup.nextSibling) {
+      page.insertBefore(group, refGroup.nextSibling);
+    } else {
+      page.appendChild(group);
+    }
+
+    var toggleSel = $('editCharProactiveMsg');
+    if (toggleSel) {
+      toggleSel.addEventListener('change', function () {
+        var sub = $('proactiveMsgSub');
+        if (sub) sub.style.display = (toggleSel.value === '1') ? 'block' : 'none';
+      });
+    }
+  }
+
+  // 打开角色编辑器时回显
+  if (typeof window.openCharEditor === 'function') {
+    var origOpen = window.openCharEditor;
+    window.openCharEditor = function (id) {
+      var r = origOpen.apply(this, arguments);
+      setTimeout(function () {
+        var old = $('proactiveMsgGroup');
+        if (old) old.remove();
+        injectSettingUI();
+      }, 120);
+      return r;
+    };
+  }
+
+  // 新建角色时重置默认
+  document.addEventListener('click', function (e) {
+    if (e.target.closest && e.target.closest('#newCharBtn')) {
+      setTimeout(function () {
+        var old = $('proactiveMsgGroup');
+        if (old) old.remove();
+        injectSettingUI();
+      }, 140);
+    }
+  }, true);
+
+  // 保存时持久化到角色对象
+  document.addEventListener('click', function (e) {
+    if (!(e.target.closest && e.target.closest('#charEditorSave'))) return;
+    var beforeId = ($('editCharId') || {}).value || '';
+    var beforeName = (($('editCharName') || {}).value || '').trim();
+    var pMsgEl = $('editCharProactiveMsg');
+    var pCdEl = $('editCharProactiveCd');
+    var enabled = pMsgEl ? (pMsgEl.value === '1') : false;
+    var cd = pCdEl ? Math.max(0, parseInt(pCdEl.value, 10) || 0) : 5;
+
+    setTimeout(async function () {
+      var c = beforeId ? getChar(beforeId)
+        : (S().characters || []).filter(function (x) { return x.name === beforeName; })
+            .sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); })[0];
+      if (!c) return;
+      c.proactiveMsg = enabled;
+      c.proactiveMsgCd = cd;
+      await saveChar(c);
+    }, 720);
+  }, true);
+
+  // ---------- 2. 冷却记录与时间管理 ----------
+  var TS_MAP_KEY = 'phone_proactive_msg_ts_v1';
+  function loadTsMap() { try { return JSON.parse(localStorage.getItem(TS_MAP_KEY) || '{}'); } catch (e) { return {}; } }
+  function saveTsMap(m) { try { localStorage.setItem(TS_MAP_KEY, JSON.stringify(m)); } catch (e) {} }
+  function markProactiveNow(charId) {
+    var m = loadTsMap();
+    m[charId] = Date.now();
+    saveTsMap(m);
+  }
+  function isCooldownReady(char) {
+    if (!char || !char.proactiveMsg) return false;
+    var m = loadTsMap();
+    var lastTs = m[char.id] || 0;
+    var cdMin = char.proactiveMsgCd != null ? Number(char.proactiveMsgCd) : 5;
+    // 选 0（不限制）时，至少保留 45 秒基础缓冲，防止极短时间内连续误判
+    var minMs = (cdMin > 0 ? cdMin * 60000 : 45000);
+    return (Date.now() - lastTs) >= minMs;
+  }
+
+  // ---------- 3. 获取或创建单聊 ----------
+  async function findOrCreateSingleChat(char) {
+    var s = S();
+    var chat = (s.chats || []).find(function (c) { return c && c.type !== 'group' && c.charId === char.id; });
+    if (chat) return chat;
+    chat = {
+      id: uid(), type: 'single', charId: char.id,
+      userId: char.userId || (s.users && s.users[0] && s.users[0].id) || null,
+      createdAt: Date.now(), updatedAt: Date.now()
+    };
+    s.chats.push(chat);
+    try { if (DB() && DB().chats) await DB().chats.put(JSON.parse(JSON.stringify(chat))); } catch (e) {}
+    return chat;
+  }
+
+  // 提取最近聊天摘要
+  function recentChatSummary(chat, char, limit) {
+    var s = S();
+    var msgs = (s.messages || []).filter(function (m) {
+      return m && m.chatId === chat.id && !m.isDeleted && !m.isRecalled && m.type !== 'vc_recap';
+    }).sort(function (a, b) { return (a.timestamp || 0) - (b.timestamp || 0); }).slice(-(limit || 12));
+
+    if (!msgs.length) return '（你们此前还没有开始过任何对话）';
+    var user = getUser(chat.userId);
+    var uname = (user && user.name) || '对方';
+    return msgs.map(function (m) {
+      var who = (m.sender === 'user') ? uname : (char.name || '我');
+      var txt = m.content || '';
+      if (m.type === 'image') txt = '[图片]';
+      else if (m.type === 'voice') txt = '[语音]';
+      else if (m.type === 'transfer') txt = '[转账]';
+      else if (m.type === 'share_music') txt = '[分享音乐] ' + (m.shareTitle || '');
+      return who + '：' + txt;
+    }).join('\n');
+  }
+
+  // 检查是否最后几条全都是角色自己发出的（避免自言自语连刷屏）
+  function countConsecutiveAiMsgs(chat, charId) {
+    var msgs = (S().messages || []).filter(function (m) {
+      return m && m.chatId === chat.id && !m.isDeleted && !m.isRecalled;
+    }).sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0); });
+
+    var count = 0;
+    for (var i = 0; i < msgs.length; i++) {
+      if (msgs[i].sender === 'ai' && msgs[i].charId === charId) count++;
+      else break;
+    }
+    return count;
+  }
+
+  // ---------- 4. 核心 AI 动机判断与发送引擎 ----------
+  var isChecking = false;
+
+  async function evaluateProactiveForChar(char) {
+    var api = chatApi();
+    if (!api) return;
+
+    var chat = await findOrCreateSingleChat(char);
+    if (!chat) return;
+
+    // 如果角色当前正在视频/语音通话中，不打扰
+    if (window.__callBusy && window.__callBusy()) return;
+    // 如果角色正处于 AI 生成中，跳过
+    if (S().typingChars && S().typingChars.has(char.id)) return;
+
+    var user = getUser(chat.userId);
+    var uname = (user && user.name) || '对方';
+    var consecutive = countConsecutiveAiMsgs(chat, char.id);
+    // 如果角色已经连续发了 3 条以上而对方还没回复，绝不继续打扰（真人分寸感）
+    if (consecutive >= 3) return;
+
+    var chatContext = recentChatSummary(chat, char, 14);
+
+    // 时间感知
+    var timeDesc = '';
+    try {
+      if (char.timeAware !== false) {
+        var tz = char.timeZone || '';
+        timeDesc = tz ? new Date().toLocaleString('zh-CN', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' }) : new Date().toLocaleString('zh-CN');
+      }
+    } catch (e) {}
+
+    var sysPrompt = '';
+    try {
+      if (typeof window.buildSystemPrompt === 'function') {
+        sysPrompt = window.buildSystemPrompt(char, chat, { isGroup: false });
+      }
+    } catch (e) {}
+
+    var prompt = sysPrompt +
+      '\n\n## 💡【自主行动动机判定】你要不要主动在微信找「' + uname + '」发消息？\n' +
+      (timeDesc ? ('当前时间是：' + timeDesc + '。\n') : '') +
+      '【你们最近的微信聊天记录】\n' + chatContext + '\n\n' +
+      '【你的心理判定要点】\n' +
+      '完全代入你当前的处境、性格、与「' + uname + '」当下的关系阶段和情绪状态，认真自问：\n' +
+      '“此时此刻，我心里有没有真实强烈的冲动，想要主动找对方说点什么？”\n' +
+      '- 应该主动发的情况：\n' +
+      '  1. 刚才的话题被中断，你想到了重要的事或者突然想解释/反悔。\n' +
+      '  2. 真实的生活琐事触发了你的分享欲（如刚吃到了好吃的、遇到了倒霉事、看到了什么东西想拍给 TA）。\n' +
+      '  3. 情绪驱动：强烈的想念、担心、吃醋、好奇对方在干嘛、或者有点别扭想找个由头搭话。\n' +
+      '  4. 符合时间点的自然问候（如深夜发现对方还没睡、早起顺手发一句）。\n' +
+      '- 绝对不要发（保持沉默）的情况：\n' +
+      '  1. 刚才已经自然互道晚安/告别，没有突发新情况。\n' +
+      '  2. 关系还比较生疏/冷淡，或者你的人设性格傲娇高冷，此时无事不会主动低头。\n' +
+      '  3. 对话正处于不需要你开口的自然停顿期，硬找话说会很尴尬像机器人客服。\n' +
+      (consecutive > 0 ? ('  4. 你之前发出的消息对方还没有回复，且事情并不紧急，正常人会克制等待，不会继续追发。\n') : '') +
+      '\n【输出格式（严格遵守）】\n' +
+      '- 如果此刻决定不发 / 没必要发：只输出一行 [不发]\n' +
+      '- 如果确定此刻有真实的理由主动发消息：第一行必须输出 [主动发]，接下来从第二行开始写你要发给对方的消息（可以发 1~3 条短消息，每条单独一行，像真人发微信一样口语自然，不要写角色名前缀，不要括号动作描写）。';
+
+    try {
+      var res = await fetch(api.url + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
+        body: JSON.stringify({
+          model: api.model || 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: prompt },
+            { role: 'user', content: '(请根据你的性格与当前剧情，真实判定要不要主动发微信消息)' }
+          ],
+          temperature: 0.95,
+          max_tokens: 800
+        })
+      });
+
+      if (!res.ok) return;
+      var data = await res.json();
+      var raw = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || '').trim();
+      if (window.__stripThink) { try { raw = window.__stripThink(raw); } catch (e) {} }
+
+      if (!raw || /\[不发\]/i.test(raw) || !/\[主动发\]/i.test(raw)) {
+        // 判定不发，更新计时器以避免短时间内无意义重复询问 AI
+        markProactiveNow(char.id);
+        return;
+      }
+
+      var lines = raw.replace(/\[主动发\]/gi, '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+      if (!lines.length) return;
+
+      // 命中主动发送！更新冷却戳
+      markProactiveNow(char.id);
+
+      var isViewingThisChat = (S().currentChatId === chat.id) && !document.hidden &&
+        document.getElementById('chat-page') && document.getElementById('chat-page').classList.contains('active');
+
+      var ts = Date.now();
+      var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+      for (var i = 0; i < lines.length && i < 4; i++) {
+        var line = lines[i];
+        if (!line) continue;
+
+        var commitFn = (typeof window.commitCharLine === 'function') ? window.commitCharLine : null;
+        var msg = commitFn ? await commitFn(chat.id, char, line, ts) : {
+          id: uid(), chatId: chat.id, sender: 'ai', type: 'text',
+          content: line, timestamp: ts, charId: char.id
+        };
+
+        ts += 450;
+        if (msg) {
+          S().messages.push(msg);
+          try { if (DB() && DB().messages) await DB().messages.put(JSON.parse(JSON.stringify(msg))); } catch (e) {}
+
+          if (isViewingThisChat) {
+            var area = document.getElementById('msgArea');
+            var typingInd = document.getElementById('typingIndicator');
+            var createFn = (typeof window.createMsgElement === 'function') ? window.createMsgElement : null;
+            var el = createFn ? createFn(msg) : null;
+            if (el && area) {
+              if (typingInd && typingInd.parentNode === area) area.insertBefore(el, typingInd);
+              else area.appendChild(el);
+              if (window.jellyScrollToBottom) window.jellyScrollToBottom(el);
+            }
+          } else {
+            // 玩家不在该聊天窗口：触发仿真微信顶部消息弹窗
+            if (window.__pushChatToast) {
+              try { window.__pushChatToast(char, msg, chat.id); } catch (e) {}
+            }
+          }
+        }
+        await sleep(300);
+      }
+
+      chat.updatedAt = Date.now();
+      try { if (DB() && DB().chats) await DB().chats.put(JSON.parse(JSON.stringify(chat))); } catch (e) {}
+      if (window.renderChatList) { try { window.renderChatList(); } catch (e) {} }
+
+    } catch (err) {
+      console.warn('[主动发消息] 判定流程中断:', err);
+    }
+  }
+
+  // ---------- 5. 轮询巡检调度（每 35 秒检查一个满足冷却的角色，避免并发卡顿） ----------
+  var charCursor = 0;
+  async function tickProactiveLoop() {
+    if (isChecking) return;
+    var allChars = (S().characters || []).filter(function (c) {
+      return c && c.proactiveMsg === true && !c.isBlocked && !c.blockedByChar;
+    });
+
+    if (!allChars.length) return;
+    if (charCursor >= allChars.length) charCursor = 0;
+
+    var targetChar = allChars[charCursor];
+    charCursor++;
+
+    if (!isCooldownReady(targetChar)) return;
+
+    isChecking = true;
+    try {
+      await evaluateProactiveForChar(targetChar);
+    } finally {
+      isChecking = false;
+    }
+  }
+
+  // 启动后台定时器
+  setInterval(tickProactiveLoop, 35000);
+
+  // 初始化首次挂载
+  function bootInit() {
+    injectSettingUI();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootInit);
+  else bootInit();
+
+})();
+</script>
+<!-- ============ 角色主动发消息 结束 ============ -->
