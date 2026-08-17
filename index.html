@@ -48697,3 +48697,311 @@ html.phone-night .msg-wrapper .lt-switch-tip{background:rgba(140,212,240,0.10) !
 })();
 </script>
 <!-- ============ 主动发照片永久保存补丁 结束 ============ -->
+<!-- ============ 朋友圈：动态二次编辑/修改屏蔽名单 + 屏蔽一键解封管理补丁 ============ -->
+<style id="phoneMomentEditAndUnblockCss">
+  /* 朋友圈操作栏里的修改按钮 */
+  .moment-actions .v-edit-moment {
+    background: #f2f3f5 !important;
+    color: #576b95 !important;
+    border-radius: 6px !important;
+    padding: 5px 12px !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    border: none !important;
+    cursor: pointer !important;
+    font-family: inherit !important;
+  }
+  .moment-actions .v-edit-moment:active { opacity: 0.7; }
+  
+  /* 屏蔽状态标签 */
+  .moment-privacy-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #e06c62;
+    background: rgba(224, 108, 98, 0.12);
+    padding: 2px 8px;
+    border-radius: 6px;
+    margin-top: 6px;
+    font-weight: 600;
+  }
+
+  /* 顶栏屏蔽管理按钮 */
+  .moment-block-mgr-btn {
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: var(--text-primary) !important;
+    background: rgba(0,0,0,0.05) !important;
+    padding: 5px 10px !important;
+    border-radius: 14px !important;
+    border: none !important;
+    cursor: pointer !important;
+    margin-right: 4px !important;
+  }
+  
+  /* 屏蔽管理弹窗内列表 */
+  .block-mgr-list {
+    max-height: 50vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 10px 0;
+  }
+  .block-mgr-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(0,0,0,0.035);
+    margin-bottom: 6px;
+  }
+  .block-mgr-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .block-mgr-av {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--primary, #8CD4F0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+  .block-mgr-av img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  html.phone-night .moment-block-mgr-btn, html.phone-dark .moment-block-mgr-btn { background: rgba(255,255,255,0.12) !important; color: #e6e8ec !important; }
+  html.phone-night .block-mgr-item, html.phone-dark .block-mgr-item { background: rgba(255,255,255,0.06); }
+</style>
+
+<script id="phoneMomentEditAndUnblockJs">
+(function () {
+  'use strict';
+
+  var S = function () { return window.__state || {}; };
+  var DB = function () { return window.__db; };
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  function getChar(id) { return (S().characters || []).find(function (c) { return c.id === id; }); }
+  function getMoment(id) { return (S().moments || []).find(function (m) { return m.id === id; }); }
+  async function saveMoment(m) { try { if (DB() && DB().moments) await DB().moments.put(JSON.parse(JSON.stringify(m))); } catch (e) {} }
+  async function saveChar(c) { try { if (DB() && DB().characters) await DB().characters.put(JSON.parse(JSON.stringify(c))); } catch (e) {} }
+
+  function avHtml(a, fb) {
+    if (a && (a.indexOf('http') === 0 || a.indexOf('data:') === 0)) return '<img src="' + esc(a) + '" alt="">';
+    return esc(a || fb || '🧸');
+  }
+
+  // ================= 1. 修改/编辑单条朋友圈弹窗 =================
+  function openEditMomentModal(momentId) {
+    var m = getMoment(momentId);
+    if (!m) return;
+
+    var chars = S().characters || [];
+    var blockedSet = new Set(m.blockedIds || []);
+
+    var blockList = chars.length
+      ? chars.map(function (c) {
+          var checked = blockedSet.has(c.id) ? 'checked' : '';
+          return '<label style="padding:8px 10px;border-radius:10px;background:rgba(0,0,0,0.035);cursor:pointer;margin-bottom:6px;display:flex;align-items:center;gap:10px;">' +
+            '<input type="checkbox" data-edit-block="' + c.id + '" ' + checked + ' style="width:18px;height:18px;accent-color:#e06c62;">' +
+            '<span style="width:28px;height:28px;border-radius:50%;overflow:hidden;display:inline-flex;align-items:center;justify-content:center;background:var(--primary);font-size:14px;">' + avHtml(c.avatar, '🧸') + '</span>' +
+            '<span style="font-size:14px;color:var(--text-primary);flex:1;">' + esc(c.name) + '</span>' +
+          '</label>';
+        }).join('')
+      : '<div style="font-size:12px;color:var(--text-secondary);">暂无可用角色</div>';
+
+    var imgPreview = m.imageUrl
+      ? '<div style="margin-bottom:10px;"><img src="' + esc(m.imageUrl) + '" style="max-height:80px;border-radius:8px;"></div>'
+      : '';
+
+    var body =
+      '<div class="setting-row">' +
+        '<label>修改文案内容</label>' +
+        '<textarea id="editMomentText" rows="4" style="width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid rgba(0,0,0,0.12);font-family:inherit;font-size:14px;line-height:1.6;outline:none;">' + esc(m.content || '') + '</textarea>' +
+      '</div>' +
+      imgPreview +
+      '<div style="margin-top:14px;">' +
+        '<div style="font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:4px;">谁不给看（勾选即屏蔽）</div>' +
+        '<div style="font-size:11.5px;color:var(--text-secondary);line-height:1.6;margin-bottom:8px;">' +
+          '在此处勾选/取消勾选角色。被勾选的角色将<b>无法看到这条朋友圈，也不会发表点赞与评论</b>。取消勾选后即可恢复正常可见。' +
+        '</div>' +
+        '<div style="max-height:180px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-right:2px;">' + blockList + '</div>' +
+      '</div>';
+
+    if (window.showModal) {
+      window.showModal('修改朋友圈权限', body, '保存修改', async function () {
+        var newText = ($('editMomentText') && $('editMomentText').value || '').trim();
+        var newBlocked = [].slice.call(document.querySelectorAll('[data-edit-block]:checked')).map(function (el) {
+          return el.getAttribute('data-edit-block');
+        });
+
+        m.content = newText;
+        m.blockedIds = newBlocked;
+
+        await saveMoment(m);
+        if (window.renderMoments) window.renderMoments();
+        if (window.showModal) window.showModal('修改成功', '该条朋友圈内容与屏蔽名单已更新 ✅', '好的');
+      }, true);
+    }
+  }
+
+  // ================= 2. 朋友圈总屏蔽管理（一键解封角色被屏蔽的朋友圈） =================
+  function openBlockManagerModal() {
+    var chars = S().characters || [];
+    var blockedChars = chars.filter(function (c) { return c && c.momentsBlockedByUser; });
+
+    var listHtml = '';
+    if (!chars.length) {
+      listHtml = '<div style="text-align:center;color:var(--text-secondary);padding:30px 0;">还没有角色</div>';
+    } else {
+      listHtml = chars.map(function (c) {
+        var isBlocked = !!c.momentsBlockedByUser;
+        return '<div class="block-mgr-item">' +
+          '<div class="block-mgr-info">' +
+            '<div class="block-mgr-av">' + avHtml(c.avatar, '🧸') + '</div>' +
+            '<div>' +
+              '<div style="font-size:14px;font-weight:600;color:var(--text-primary);">' + esc(c.name) + '</div>' +
+              '<div style="font-size:11px;color:' + (isBlocked ? '#e06c62' : '#3fbf60') + ';margin-top:2px;">' +
+                (isBlocked ? '🚫 TA发的朋友圈已被你隐藏' : '🟢 正常显示TA的朋友圈') +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+          '<button class="action-text" data-toggle-char-block="' + c.id + '" style="font-size:12px;padding:5px 10px;border-radius:10px;border:none;cursor:pointer;background:' + (isBlocked ? 'linear-gradient(145deg,#B6EDFF,#8CD4F0)' : 'rgba(0,0,0,0.06)') + ';">' +
+            (isBlocked ? '解除屏蔽' : '屏蔽TA') +
+          '</button>' +
+        '</div>';
+      }).join('');
+    }
+
+    var body =
+      '<div style="font-size:12px;color:var(--text-secondary);line-height:1.7;margin-bottom:10px;">' +
+        '这里管理的是<b>「角色自己发的朋友圈是否在你的列表里显示」</b>。<br>如果之前误触了屏蔽，点一下「解除屏蔽」或下方一键解封，即可恢复看到 TA 的朋友圈！' +
+      '</div>' +
+      (blockedChars.length ? '<button class="btn-primary" id="unblockAllCharsBtn" style="width:100%;margin-bottom:10px;padding:9px 0;font-size:13px;">✨ 一键全部解除屏蔽 (' + blockedChars.length + '人)</button>' : '') +
+      '<div class="block-mgr-list">' + listHtml + '</div>';
+
+    if (window.showModal) {
+      window.showModal('朋友圈屏蔽管理', body, '关闭', null, false);
+      
+      setTimeout(function () {
+        // 单个角色解除/开启屏蔽
+        document.querySelectorAll('[data-toggle-char-block]').forEach(function (btn) {
+          btn.addEventListener('click', async function () {
+            var cid = btn.getAttribute('data-toggle-char-block');
+            var c = getChar(cid);
+            if (!c) return;
+            c.momentsBlockedByUser = !c.momentsBlockedByUser;
+            if (!c.momentsBlockedByUser) c._leakRevealed = false;
+            await saveChar(c);
+            if (window.renderMoments) window.renderMoments();
+            openBlockManagerModal(); // 刷新弹窗
+          });
+        });
+
+        // 一键全部解封
+        var unblockAllBtn = $('unblockAllCharsBtn');
+        if (unblockAllBtn) {
+          unblockAllBtn.addEventListener('click', async function () {
+            for (var i = 0; i < chars.length; i++) {
+              if (chars[i].momentsBlockedByUser) {
+                chars[i].momentsBlockedByUser = false;
+                chars[i]._leakRevealed = false;
+                await saveChar(chars[i]);
+              }
+            }
+            if (window.renderMoments) window.renderMoments();
+            if (window.showModal) window.showModal('已全部解封', '所有角色发出的朋友圈现已全部恢复正常可见！🎉', '好的');
+          });
+        }
+      }, 50);
+    }
+  }
+
+  // ================= 3. 增强朋友圈卡片渲染：注入修改按钮与标签 =================
+  function enhanceMomentsUI() {
+    var cont = $('momentsContainer');
+    if (!cont) return;
+
+    cont.querySelectorAll('.moment-card').forEach(function (card) {
+      var actBox = card.querySelector('.moment-actions');
+      if (!actBox) return;
+
+      // 提取 momentId
+      var anyBtn = actBox.querySelector('[data-id]');
+      var mid = anyBtn ? anyBtn.getAttribute('data-id') : null;
+      if (!mid) return;
+
+      var m = getMoment(mid);
+      if (!m) return;
+
+      // 玩家自己发布的动态
+      if (m.isUser) {
+        // 1. 注入「修改」按钮
+        if (!actBox.querySelector('.v-edit-moment')) {
+          var editBtn = document.createElement('button');
+          editBtn.className = 'v-edit-moment';
+          editBtn.textContent = '修改';
+          editBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            openEditMomentModal(mid);
+          });
+          // 放在删除按钮前，或直接追加
+          var delBtn = actBox.querySelector('[data-act="del"]');
+          if (delBtn) actBox.insertBefore(editBtn, delBtn);
+          else actBox.appendChild(editBtn);
+        }
+
+        // 2. 如果设置了屏蔽名单，在时间旁边提示屏蔽人数
+        var timeEl = card.querySelector('.moment-time');
+        if (timeEl && m.blockedIds && m.blockedIds.length && !card.querySelector('.moment-privacy-badge')) {
+          var badge = document.createElement('span');
+          badge.className = 'moment-privacy-badge';
+          badge.innerHTML = '🔒 已对 ' + m.blockedIds.length + ' 人隐藏';
+          badge.title = '点击下方「修改」可增减屏蔽名单';
+          timeEl.insertAdjacentElement('afterend', badge);
+        }
+      }
+    });
+
+    // 顶栏注入「屏蔽管理」按钮
+    var header = document.querySelector('#moments-page .app-header');
+    if (header && !header.querySelector('.moment-block-mgr-btn')) {
+      var mgrBtn = document.createElement('button');
+      mgrBtn.className = 'moment-block-mgr-btn';
+      mgrBtn.textContent = '屏蔽管理';
+      var plusBtn = document.getElementById('newMomentBtn');
+      if (plusBtn) header.insertBefore(mgrBtn, plusBtn);
+      else header.appendChild(mgrBtn);
+
+      mgrBtn.addEventListener('click', openBlockManagerModal);
+    }
+  }
+
+  // 包装原有渲染函数
+  if (typeof window.renderMoments === 'function') {
+    var origRenderMoments = window.renderMoments;
+    window.renderMoments = function () {
+      origRenderMoments.apply(this, arguments);
+      setTimeout(enhanceMomentsUI, 30);
+    };
+  }
+
+  // 初次加载和定期检查
+  setTimeout(enhanceMomentsUI, 600);
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest && e.target.closest('[data-page="moments"]');
+    if (t) setTimeout(enhanceMomentsUI, 200);
+  }, true);
+
+})();
+</script>
+<!-- ============ 朋友圈修改与屏蔽管理 结束 ============ -->
