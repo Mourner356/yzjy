@@ -56983,6 +56983,11 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       if (i >= 0) list[i] = slim; else list.push(slim);
       return saveCharAccs(list);
     }
+    // 删除某角色的推特号：删掉后 charAccOf 会返回 null，角色回到「还没建推特号」状态，可重新用 AI 生成
+    function delCharAcc(cid) {
+      var list = charAccs().filter(function (x) { return x.charId !== cid; });
+      return saveCharAccs(list);
+    }
     // 这一轮谁能发帖：没绑身份的一直能发；绑了的只在该身份在线时能发
     function activeCharAccs() {
       var now = S().currentUserId || null;
@@ -57283,7 +57288,7 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       accounts: accounts, saveAccounts: saveAccounts, curAcc: curAcc, setCurAcc: setCurAcc,
       newAccount: newAccount, putAccount: putAccount,
       charAccs: charAccs, saveCharAccs: saveCharAccs, charAccOf: charAccOf,
-      putCharAcc: putCharAcc, activeCharAccs: activeCharAccs,
+      putCharAcc: putCharAcc, delCharAcc: delCharAcc, activeCharAccs: activeCharAccs,
       posts: posts, savePosts: savePosts, getPost: getPost, putPost: putPost,
       follows: follows, saveFollows: saveFollows, isFollowing: isFollowing, toggleFollow: toggleFollow,
       myStats: myStats, saveMyStats: saveMyStats, addFans: addFans,
@@ -57391,7 +57396,9 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
 
     function open(which) {
       build();
-      if (which) tab = which;
+      // 点开推特默认回首页：不传 which 时也要重置 tab，
+      // 否则会沿用上次残留的 tab，让首页刷新按钮被 switchTab 藏成 hidden
+      tab = which || 'home';
       app.classList.add('show');
       applyDark();
       switchTab(tab);
@@ -59320,7 +59327,10 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
           esc(src ? src.awards : '') + '</textarea></div>' +
         '<div class="setting-row"><label>未公开的信息</label>' +
           '<textarea id="twCcSecret" rows="2" placeholder="ta 自己心里清楚、但没公开的事；会影响 ta 发帖的态度">' +
-          esc(src ? src.secret : '') + '</textarea></div>';
+          esc(src ? src.secret : '') + '</textarea></div>' +
+        (ex ? '<div style="margin-top:10px;"><button id="twCcDel" type="button" ' +
+          'class="btn-secondary" style="width:100%;color:#c0392b;border-color:#e74c3c;">' +
+          '🗑 删除这个推特号（恢复成「还没建号」，可重新 AI 生成）</button></div>' : '');
 
       window.showModal((ex ? '编辑' : '创建') + '：' + (c.name || '角色'), body, '保存', function () {
         var o = {
@@ -59363,6 +59373,20 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
             var tip = $('twCcTip');
             if (tip) tip.textContent = '头像已选好';
           });
+        });
+        var del = $('twCcDel');
+        if (del) del.addEventListener('click', function () {
+          // 关闭弹窗前先记下 cid：showModal 关掉后 this 上下文会丢
+          var cid = c.id, cname = c.name || '角色';
+          window.showModal('删除这个推特号',
+            '删掉后 ta 的推特号就没了，会回到「还没建号」状态。' +
+            '可以随时再点「一键生成所有角色的推特号」用 AI 重新生成一个。' +
+            (ex && ex.avatar ? '（自定义头像也会一起删掉）' : ''),
+            '确认删除', function () {
+              T.delCharAcc(cid);
+              try { window.__twRender && window.__twRender(); } catch (e) {}
+              if (onDone) setTimeout(function () { onDone(true); }, 60);
+            }, true);
         });
       }, 50);
     }
