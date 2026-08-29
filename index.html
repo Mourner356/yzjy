@@ -2372,7 +2372,7 @@ if (typeof Dexie === 'undefined') {
                             </div>
                         </div>
                         <div class="setting-row"><label>人设描述</label><textarea id="editCharPersona" rows="4" placeholder="性格、背景、说话风格..."></textarea></div>
-                        <div class="setting-row"><label>备注<br><small style="color:var(--text-secondary);font-weight:400;">只给你自己看的小纸条，不会发给 AI，会显示在人设列表里</small></label><textarea id="editCharNote" rows="2" placeholder="例如：这个是我给谁谁做的号 / 备用 / 待完善…"></textarea></div>
+                        <div class="setting-row"><label>备注<br><small style="color:var(--text-secondary);font-weight:400;">通讯录里会显示成这个名字（真名缩在后面小字）。角色查你手机时也会看见自己被备注成什么</small></label><textarea id="editCharNote" rows="2" placeholder="例如：老公 / 别接 / 房东…"></textarea></div>
                         <div class="setting-row"><label>在线状态</label><select id="editCharOnline"><option value="1">🟢 在线</option><option value="0">⚪ 离线</option></select></div>
                         <div class="setting-row"><label>感知实时时间</label><select id="editCharTimeAware"><option value="1">🕐 开启（知道现在几点）</option><option value="0">🌫️ 关闭（靠聊天自己推理）</option></select></div>
                         <div class="setting-row" id="editCharTimeZoneSearchRow" style="margin-bottom:-4px;"><label>搜索角色地点</label><input type="text" id="editCharTimeZoneSearch" placeholder="输入城市名，如 洛杉矶 / paris / 东京" autocomplete="off"></div>
@@ -10870,10 +10870,16 @@ ${groupTimeInfo}
         var div = document.createElement('div');
         div.className = 'chat-item';
         var name = isGroup ? (chat.title || chars.map(function (c) { return c.name; }).join('、')) : (chars[0] ? chars[0].name : '未命名');
+        // 备注当微信备注用：单聊有备注就把备注显示成主名字，真名缩在后面小字里。
+        // （以前备注只出现在人设列表，通讯录完全看不到，等于写了白写。）
+        var note = (!isGroup && chars[0] && chars[0].note) ? String(chars[0].note).trim() : '';
+        var nameHtml = note
+            ? esc(note.slice(0, 20)) + '<span class="ci-realname">' + esc(name) + '</span>'
+            : esc(name);
         var avatarInner = isGroup
             ? '<div class="group-avatar-stack">' + chars.slice(0, 4).map(function (c) { return winAv(c.avatar); }).join('') + '</div>'
             : winAv(chars[0] ? chars[0].avatar : '🧸');
-        div.innerHTML = '<div class="avatar">' + avatarInner + '</div><div class="info"><div class="name">' + esc(name) + '</div><div class="preview">' + esc(previewOf(last, isGroup)) + '</div></div><div class="badge">' + msgs.length + '</div>';
+        div.innerHTML = '<div class="avatar">' + avatarInner + '</div><div class="info"><div class="name">' + nameHtml + '</div><div class="preview">' + esc(previewOf(last, isGroup)) + '</div></div><div class="badge">' + msgs.length + '</div>';
         div.addEventListener('click', function () { if (window.openChat) window.openChat(chat.id); });
         return div;
     }
@@ -11486,8 +11492,19 @@ ${groupTimeInfo}
         var relText = rel ? ('（你和ta的关系：' + (rel.type || '认识') + '，' + (rel.desc || '') + '）') : '';
         var collect = moment.collect;
         var collectText = collect ? ('\nps：ta在这条朋友圈发起了收款，' + (collect.amount ? ('每人 ¥' + collect.amount) : '自愿金额') + (collect.note ? ('，事由：' + collect.note) : '') + '。愿意付就输出 [付款:金额]，不愿意就别输出。') : '';
+        // 配图必须讲清楚：以前只写一个 [配图] 两个字，模型基本无视，
+        // 于是玩家发了图、角色却只对着文字说话。
+        var pN = (moment.images && moment.images.length) ? moment.images.length : (moment.imageUrl ? 1 : 0);
+        var pD = (moment.imageDesc || '').trim();
+        var picLine = (pN || pD)
+          ? ('\n【这条圈配了' + (pN > 1 ? (pN + '张照片') : '一张照片') + '，你已经看见了】' +
+             (pD ? ('图里是：' + pD + '。') : '') +
+             '你的反应必须建立在这张图上（夸、吐槽、认出地点、盯细节、或因为图里有别人而在意），' +
+             '不许只顺着配文空谈，也不许说"看不到图""配张图啊"。')
+          : '';
         var prompt = '你是"' + char.name + '"，' + ((char.persona || '').slice(0, 80)) + '。\n' +
-            '你刚和"' + userName + '"聊了会儿天，顺手点开了ta的朋友圈，看到ta发的这条：' + (moment.imageUrl ? '[配图]' : '') + '"' + (moment.content || '') + '"。' + relText + collectText + '\n' +
+            '你刚和"' + userName + '"聊了会儿天，顺手点开了ta的朋友圈，看到ta发的这条："' +
+            (moment.content || '') + '"。' + picLine + relText + collectText + '\n' +
             '像真人刷到朋友之后那样，你会怎么反应？可以组合，别刻意，也别每次都又赞又评论：\n' +
             '- 点赞：输出一行 [赞]\n' +
             '- 在朋友圈下评论：输出一行 [评论:你要说的话]（一句真实的人话，别写旁白动作）\n' +
@@ -16185,6 +16202,15 @@ html.phone-night .fcm .c-reply.evil{color:#e0776f !important;}
                     (sh.body ? ('，文章大意：' + String(sh.body).slice(0, 260)) : '') +
                     '。这不是空白内容，要针对文章主题反应。');
             }
+            // 图片也要算进「发了什么」：不然纯图无配文时会落到下面那句
+            // 「只有很短的一点文字或什么都没写」，角色就当成空帖处理了。
+            var picN = (m.images && m.images.length) ? m.images.length : (m.imageUrl ? 1 : 0);
+            var picD = (m.imageDesc || '').trim();
+            if (picN || picD) {
+                parts.push('这条朋友圈里有【' + (picN > 1 ? (picN + '张照片') : '一张照片') + '】' +
+                    (picD ? ('，图里是：' + picD) : '') +
+                    '。这是这条圈的主体之一，不是空白内容。');
+            }
             if (!parts.length) parts.push('这条朋友圈只有很短的一点文字或什么都没写');
             return parts.join('\n');
         }
@@ -16289,8 +16315,23 @@ html.phone-night .fcm .c-reply.evil{color:#e0776f !important;}
                     var fmt = dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate()) + ' ' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
                     timeText = '（发布时间：' + fmt + (moment.timeMode === 'virtual' ? '，剧情设定时间' : '') + '）';
                 } catch (e) {}
-                // 配图 / 收款描述，让角色能"看见"照片和收款并作出反应
-                var imgText = moment.imageUrl ? ('（这条朋友圈配了一张图' + (moment.imageDesc ? '：' + moment.imageDesc : '') + '，你看得见）') : '';
+                // 配图 / 收款描述，让角色能"看见"照片和收款并作出反应。
+                // 注意：玩家发圈时图片存在 images 数组里（imageUrl 只是兼容字段，
+                // 老代码只认它）。这里两个都读，并且把「有几张图」和「图里是什么」
+                // 分开讲清楚 —— 以前只判断 imageUrl 且措辞太轻，模型经常整段忽略，
+                // 结果玩家明明发了图，角色只顺着文字空谈。
+                var imgN = (moment.images && moment.images.length) ? moment.images.length
+                         : (moment.imageUrl ? 1 : 0);
+                var imgD = (moment.imageDesc || '').trim();
+                var imgText = (imgN || imgD)
+                  ? ('\n【这条朋友圈配了' + (imgN > 1 ? (imgN + '张图片') : '图片') + '，你已经看见了】' +
+                     (imgD ? ('图里是：' + imgD + '。') : '') +
+                     '你是先看到图、再看文字的，所以你的反应必须建立在这张图上：' +
+                     '可以夸、可以吐槽、可以认出地点或背景里的人、可以盯着某个细节问一句、' +
+                     '也可以因为图里出现了别人而在意。' +
+                     '绝对不许说"配张图啊""怎么没图""看不到图"，也不要只对着那句文字空谈。' +
+                     (imgD ? '' : '（没有给出图片说明时，按配文的语境合理推断图里大概是什么，别追问"这是什么图"。）'))
+                  : '';
                 var collect = moment.collect;
                 var collectText = collect ? ('\nps：ta在这条朋友圈发起了收款，' + (collect.amount ? ('每人 ¥' + collect.amount) : '自愿金额') + (collect.note ? ('，事由：' + collect.note) : '') + '。你若愿意付就输出 [付款:金额]。') : '';
                 // 活人感四件套：真实内容 / 自己的时区 / 聊天记忆 / 别人已有的评论
@@ -16794,9 +16835,11 @@ html.phone-night .fcm .c-reply.evil{color:#e0776f !important;}
         }
 
         async function callForum(api, sys, user, maxTokens) {
+            // 不传 max_tokens：论坛帖子+评论一多也会被硬截断，
+            // 截断后 parseArr 捞不全，表现就是「刷不出来」或只出一两条。
             for (var attempt = 0; attempt < 2; attempt++) {
                 try {
-                    var res = await fetch(api.url + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key }, body: JSON.stringify({ model: api.model, messages: [{ role: 'system', content: sys }, { role: 'user', content: user + (attempt ? '\n（只输出JSON数组本身，不要任何说明文字，不要拒绝）' : '') }], temperature: 0.95, max_tokens: maxTokens }) });
+                    var res = await fetch(api.url + '/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key }, body: JSON.stringify({ model: api.model, messages: [{ role: 'system', content: sys }, { role: 'user', content: user + (attempt ? '\n（只输出JSON数组本身，不要任何说明文字，不要拒绝）' : '') }], temperature: 0.95 }) });
                     if (!res.ok) continue;
                     var data = await res.json();
                     var raw = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || '').trim();
@@ -17618,7 +17661,7 @@ html.phone-night .fcm .c-reply .c-rreply-btn{color:#7d8b95 !important;}
     async function chat(sys,user,maxTokens){
       var api=F.api();if(!api)return [];
       try{
-        var res=await fetch(api.url+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+api.key},body:JSON.stringify({model:api.model,messages:[{role:'system',content:sys},{role:'user',content:user}],temperature:1.0,max_tokens:maxTokens||2000})});
+        var res=await fetch(api.url+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+api.key},body:JSON.stringify({model:api.model,messages:[{role:'system',content:sys},{role:'user',content:user}],temperature:1.0})});
         if(res.ok){var data=await res.json();return F.parseArr((data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content||'').trim());}
       }catch(e){}
       return [];
@@ -41505,8 +41548,9 @@ var LZString=(function(){var f=String.fromCharCode;var keyStrBase64="ABCDEFGHIJK
       body: JSON.stringify({
         model: api.model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.92,
-        max_tokens: maxTokens || 500
+        temperature: 0.92
+        // 不传 max_tokens：写长一点的帖子时 500 会把结尾截掉，
+        // 长度交给提示词控制，不靠硬截断。
       })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -44969,7 +45013,8 @@ html.phone-night .diary-mgr .dm-row+.dm-row{border-top-color:rgba(255,255,255,0.
     var res = await fetch(api.url + '/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api.key },
-      body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: prompt }], temperature: 0.92, max_tokens: maxTokens || 640 })
+      // 不传 max_tokens：640 会把长一点的回复截断，长度交给提示词控制
+      body: JSON.stringify({ model: api.model, messages: [{ role: 'user', content: prompt }], temperature: 0.92 })
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var d = await res.json();
@@ -56780,50 +56825,25 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       try { var v = JSON.parse(localStorage.getItem(k) || 'null'); return v == null ? d : v; }
       catch (e) { return d; }
     }
-    // 帖子瘦身：把 dataURL 图片换成一句描述，留住文字
-    function trimPosts(list) {
-      return list.map(function (p) {
-        if (p && p.images && p.images.length && /^data:/.test(p.images[0] || '')) {
-          var c = Object.assign({}, p);
-          c.images = [];
-          if (!c.imageDesc) c.imageDesc = '（图片因空间不足已清理）';
-          return c;
-        }
-        return p;
-      });
-    }
-    // 写入必须能报告失败：配额满时静默丢数据会造成「发了帖却没有」这种查不出的问题
+    // v6-64：原来这里有个 trimPosts()，在配额爆掉时把帖子里的 dataURL 图片
+    // 换成「（图片因空间不足已清理）」。帖子已经搬去 IndexedDB、发图也压到 200KB
+    // 以内了，这个函数不再有调用者，删掉以免以后又被误用去删玩家的图。
+    // 写入必须能报告失败：配额满时静默丢数据会造成「发了帖却没有」这种查不出的问题。
+    //
+    // v6-64 清理：帖子已经搬去 IndexedDB（见文件末尾 twPostsIdbJs），
+    // 所以这里两段旧的自救代码都必须删掉，它们只会继续制造 bug：
+    //   1) 「腾空间」那段拿 k 和 K.posts 比。帖子真实键是 tw_posts_v1__<账号id>，
+    //      永远不等于裸键，于是它读写了一个空键，一点空间都没腾出来。现在帖子
+    //      根本不在 localStorage 里了，这段彻底没有意义。
+    //   2) 「数组反复砍半」那段最危险：保护名单只列了 acc/chars/stat/cfg，
+    //      漏掉的 dm、noti、follow、world、wb 会被悄悄腰斩，而且没有任何提示。
+    //      这正是「刷新一次数据少一半」那类查不出来的 bug 的来源。
+    //
+    // 新策略只有一条：写不进去就老实返回 false，让上层弹提示。
+    // 宁可这一次没保存上，也绝不偷偷删掉玩家已有的数据。
     function wr(k, v) {
       try { localStorage.setItem(k, JSON.stringify(v)); return true; }
-      catch (e) {
-        try {
-          // 帖子里的图片最占地方，先腾地方；注意绝不裁剪 k 自己
-          if (k !== K.posts) {
-            var p = rd(K.posts, []);
-            if (Array.isArray(p) && p.length) {
-              // 腾空间时也别丢玩家自己的帖和角色帖，只砍 npc/陌生人的旧帖
-              var keepP = p.filter(function (x) { return x && (x.authorType === 'me' || x.authorType === 'char'); });
-              var otherP = p.filter(function (x) { return !x || (x.authorType !== 'me' && x.authorType !== 'char'); }).slice(0, 20);
-              localStorage.setItem(K.posts, JSON.stringify(trimPosts(keepP.concat(otherP))));
-            }
-          }
-          localStorage.setItem(k, JSON.stringify(v));
-          return true;
-        } catch (e2) {}
-        try {
-          if (Array.isArray(v) && v.length > 1) {
-            // 账号类数据绝不砍半：宁可整体保存失败也不能悄悄删掉玩家的号
-            // （曾经这里把角色推特号数组反复腰斩，导致"生成11个只剩4个""原有号全没了"）
-            if (k === K.acc || k === K.chars || k === K.stat || k === K.cfg) return false;
-            var arr = v.slice(0);
-            while (arr.length > 1) {
-              arr = arr.slice(0, Math.max(1, Math.floor(arr.length / 2)));
-              try { localStorage.setItem(k, JSON.stringify(arr)); return true; } catch (e3) {}
-            }
-          }
-        } catch (e4) {}
-        return false;
-      }
+      catch (e) { return false; }
     }
 
     function uid() { return 'tw' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -57178,8 +57198,11 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
           body: JSON.stringify({
             model: a.model,
             messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-            temperature: 1,
-            max_tokens: maxTokens || 4000
+            temperature: 1
+            // 不传 max_tokens：让模型/接口自己决定长度。
+            // 以前写死 4000，帖子+评论+私信+转发一多就被硬截断，
+            // 于是数组没有闭合的 ]，最后弹「这次没读懂返回内容」。
+            // 书城那份 ask 早就是这么做的（52020 行），这里保持一致。
           }),
           signal: ctrl.signal
         });
@@ -59529,6 +59552,27 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       if (j >= 0 && j < t.length - 1) t = t.slice(0, j + 1);
       return t.replace(/,\s*([}\]])/g, '$1').trim();
     }
+    // 从一段可能被截断的 JSON 文本里逐个捞出完整的 {...} 对象。
+    // 只要一个对象自身闭合就收下，最后那个没写完的自动丢掉。
+    function salvageObjects(seg) {
+      var out = [], d = 0, st = -1, inStr = false, esc = false;
+      for (var i = 0; i < seg.length; i++) {
+        var c = seg[i];
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c === '{') { if (d === 0) st = i; d++; }
+        else if (c === '}') {
+          d--;
+          if (d === 0 && st >= 0) {
+            try { out.push(JSON.parse(seg.slice(st, i + 1))); } catch (e) {}
+            st = -1;
+          }
+        }
+      }
+      return out;
+    }
     // 按 key 抠出一个数组片段，用于模型漏了闭合括号、或整包 parse 失败时的兜底
     function grabArray(t, key) {
       var m = new RegExp('"' + key + '"\\s*:\\s*\\[').exec(t);
@@ -59568,7 +59612,12 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
           }
         }
       }
-      return [];
+      // 走到这里说明模型把输出截断了：数组没有闭合的 ]（4000 token 上限最常见，
+      // 帖子+评论+私信一多就写不完）。旧代码直接 return []，于是五个 key 全空、
+      // parseEnvelope 返回 null，最后弹「这次没读懂返回内容，再刷一次」——
+      // 其实前面那些完整的帖子是好的，只是最后一条被切断了。
+      // 改成从 start 开始逐个捞完整对象：截断的最后一条丢掉，前面全部留住。
+      return salvageObjects(t.slice(start));
     }
     function parseEnvelope(raw) {
       var t = stripFence(raw);
@@ -59727,14 +59776,28 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       // 陌生人/npc 私信每轮都正常有；但「玩家创造的角色」私信玩家是小概率事件（约 30%）
       var charDmAllowed = Math.random() < 0.3;
 
+      // 帖子配图必须写进提示词，否则模型只读到 text，就会出现
+      // 「玩家明明发了图，NPC 却完全没意识到有图」这种反应。
+      // images 是真实图片（dataURL），imageDesc 是文字描述的图，两者都算「这条帖有图」。
+      function picText(p) {
+        if (!p) return '';
+        var n = (p.images && p.images.length) ? p.images.length : (p.imageUrl ? 1 : 0);
+        var desc = (p.imageDesc || '').trim();
+        if (!n && !desc) return '';
+        var s = '［这条帖带' + (n > 1 ? (n + '张图') : '图') + '，你看得见';
+        if (desc) s += '：' + clip(desc, 80);
+        s += '］';
+        return s;
+      }
+
       var recent = T.posts().slice(0, 10).map(function (p) {
         if (p.rtOf) return null;   // 转发不占用「可被转发的原帖」名额
         return '- postId=' + p.id + '｜' + (p.authorType === 'me' ? '【玩家本人】' : '') + (p.name || '') +
-               '(@' + (p.handle || '') + ')：' + clip(p.text, 70);
+               '(@' + (p.handle || '') + ')：' + clip(p.text, 70) + picText(p);
       }).filter(Boolean);
 
       var mine = T.posts().filter(function (p) { return p.authorType === 'me'; }).slice(0, 6).map(function (p) {
-        return '- postId=' + p.id + '｜' + clip(p.text, 60);
+        return '- postId=' + p.id + '｜' + clip(p.text, 60) + picText(p);
       });
 
       var waiting = T.dms().filter(function (d) {
@@ -59776,6 +59839,15 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
         '',
         '【玩家自己发过的帖子（点赞/评论要挂到这些 postId 上）】',
         mine.length ? mine.join('\n') : '（玩家还没发过帖）',
+        '',
+        '【关于配图（很重要，经常被忽略）】',
+        '上面帖子里凡是标着［这条帖带图，你看得见…］的，就是真的配了图片，' +
+        '刷到这条帖的人在屏幕上是先看见图、再看文字的。' +
+        '所以评论、转发、私信里提到这条帖时，必须把图当成已经看过的东西来反应：' +
+        '夸构图、问在哪拍的、认出背景、吐槽滤镜、盯着图里的某个细节、或者因为图里有别人而追问。' +
+        '绝对不要只顺着那句文字空谈，也绝对不要说"配张图啊""看不到图""图呢"这种话——图就在那儿。' +
+        '如果标注里写了图片内容，就针对那个内容说话；如果只写了带图没写内容，' +
+        '就按文字的语境合理推断图里大概是什么，别问玩家图是什么。',
         '',
         '【玩家回复过、正等着对方接话的私信】',
         waiting.length ? waiting.join('\n') : '（没有等回复的私信）',
@@ -59865,7 +59937,10 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
         };
         var all = T.posts();
         all.unshift(p);
-        if (T.savePosts(all)) out++;
+        // 关键：没真的写进存储，就绝不能写角色记忆。
+        // 否则会出现「角色记忆里记得自己发过帖，玩家首页却一条都没有」这种查不出的鬼影。
+        if (!T.savePosts(all)) return;
+        out++;
         if (ca) memPush(ca.charId, '我在推特上发了一条：' + clip(text, 80));
         // 角色之间的推特互动也写进各自记忆：聊天里提起这事时对得上
         (p.replies || []).forEach(function (r) {
@@ -60076,7 +60151,9 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       opts = opts || {};
       var acc = T.curAcc();
       var pr = buildPrompt(acc, opts);
-      var raw = await T.ask(pr.sys, pr.user, 4000, 180000);
+      // 第 3 个参数已经不再作为 max_tokens 生效（ask 里不传了），留着只为签名兼容。
+      // 不限长度 = 不会被硬截断，但输出更慢，所以超时给足 180 秒。
+      var raw = await T.ask(pr.sys, pr.user, 0, 180000);
       var data = parseEnvelope(raw);
       if (!data) {
         try { console.warn('[推特] 这次返回读不出结构：', String(raw || '').slice(0, 400)); } catch (e) {}
@@ -60392,7 +60469,7 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
     g.innerHTML = '<div class="group-title">好友关系</div>' +
       '<button class="btn-secondary" id="delFriendBtn" style="width:100%;">删除好友</button>' +
       '<div style="font-size:11.5px;color:var(--text-secondary);line-height:1.7;margin-top:6px;">' +
-      '删好友只删掉聊天，人设保留。被删的人会像真人一样反应——过一会儿可能申请加回你（在「通知」里）；如果 ta 还被你拉黑，就只能走支付宝转账给你留话。</div>';
+      '删除好友记忆不会删除</div>';
     var dangerBtn = document.getElementById('deleteCharBtn');
     var dangerGroup = dangerBtn ? dangerBtn.closest('.setting-group') : null;
     if (dangerGroup && dangerGroup.parentNode) dangerGroup.parentNode.insertBefore(g, dangerGroup);
@@ -60586,7 +60663,9 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       if (u && ch.userId && ch.userId !== u) return;
       if (seen[ch.charId]) return; seen[ch.charId] = 1;
       var c = getChar(ch.charId); if (!c) return;
-      out.push({ chatId: ch.id, charId: c.id, name: c.name });
+      // note = 玩家给这个人起的备注。角色翻手机时看到的是备注，不是真名，
+      // 所以必须一起带出去（活人感的关键：他会先看到自己被备注成什么）。
+      out.push({ chatId: ch.id, charId: c.id, name: c.name, note: (c.note ? String(c.note).trim() : '') });
     });
     return out;
   }
@@ -60918,12 +60997,72 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
     } catch (e) {}
   }
 
+  // 备注这一段提示词：分三种情况，避免每次翻手机都把备注重新惊讶一遍
+  //   1) 第一次翻这台手机 → 完整发挥，盯着自己被存成什么
+  //   2) 不是第一次、但玩家改过备注 → 只讲「变化」，当场发现
+  //   3) 不是第一次、备注也没变 → 只留一句「你早就知道」，不许再当新鲜事
+  function noteHint(ctx) {
+    var st = ctx.noteState || { first: true };
+    var me = ctx.meName;
+
+    if (st.first) {
+      return (ctx.myNote
+        ? ('【你在这台手机里被存成「' + ctx.myNote + '」】。这是你第一次拿到' + me + '的手机，' +
+           '第一时间就会看见自己的名字被写成这个。这是' + me + '亲手起的备注，你会立刻有反应——' +
+           '甜的、肉麻的、敷衍的、冷淡的、带外号的、还是干脆就是全名，含义完全不同。' +
+           '按你的性格和你俩的关系去解读它：可能得意、可能脸红、可能挑刺、可能酸一句"就这？"、' +
+           '也可能装作不在意但明显在意。这件事你一定要在开头某一步提到，别憋着不说。\n')
+        : ('【你在这台手机里没有备注，' + me + '存的就是你的本名】。这是你第一次翻这台手机，' +
+           '你会注意到这一点——别人都有备注、你却只是个名字，或者大家都没有。按你的性格决定要不要计较。\n')) +
+        '通讯录里的名字都是' + me + '自己起的备注，后面括号里才是真名。' +
+        '备注怎么写的很能说明问题：亲密的会有昵称，疏远的只写全名，还有些备注本身就带情绪或身份' +
+        '（比如"房东""别接""前任"这种）。你看到这些会自然地往心里去，尤其是和你有关系的人被怎么备注。' +
+        '但你只是个看手机的人，不要逐条点评所有备注，挑最刺你的那一两个说。\n';
+    }
+
+    // 不是第一次了
+    var out = '【关于备注：你以前就翻过这台手机，通讯录里谁被存成什么、你自己被存成「' +
+      (ctx.myNote || '本名') + '」，你早就知道了】。' +
+      '所以这次绝对不要再为备注惊讶、不要再重新评论一遍、不要问"你怎么把我存成这样"——那是上次的事。' +
+      '把注意力放在聊天内容、朋友圈、和你此刻真正在意的事情上。\n';
+
+    if (st.myChanged) {
+      out += '【但有一件事你一进来就发现了：' + me + '把你的备注改了】。' +
+        (st.myOld
+          ? ('以前你被存成「' + st.myOld + '」，现在变成了' + (ctx.myNote ? ('「' + ctx.myNote + '」' ) : '你的本名（备注被删掉了）') + '。')
+          : ('你以前根本没有备注，现在被存成了「' + ctx.myNote + '」。')) +
+        '这个改动对你意义很大——是关系近了、还是被降级了、还是干脆被删掉了。' +
+        '你会当场注意到并作出反应：追问、得意、失落、冷笑、赌气，全看你的性格和这个改动的方向。' +
+        '这件事必须在前两步之内提出来。\n';
+    }
+    if (st.changed && st.changed.length) {
+      out += '【另外' + me + '还改了别人的备注】：' +
+        st.changed.slice(0, 4).map(function (x) {
+          if (!x.from) return '「' + x.name + '」新加了备注「' + x.to + '」';
+          if (!x.to) return '「' + x.name + '」的备注「' + x.from + '」被删掉了';
+          return '「' + x.name + '」从「' + x.from + '」改成了「' + x.to + '」';
+        }).join('；') +
+        '。这些变化里如果有和你有关系的人，或者改动本身很刺眼，你会留意到并说一句；' +
+        '不相干的就别硬提。\n';
+    }
+    return out;
+  }
+
   // ---------- AI 决策：下一步角色想干什么 ----------
   function stepContext() {
     var c = getChar(pk.charId);
     var me = (getUser(pk.userId) || {}).name || '机主';
     var list = contactsOf();
-    var names = list.map(function (x) { return x.name; });
+    // 通讯录里显示的是备注（有备注就用备注，真名跟在后面），因为角色翻手机时
+    // 屏幕上就是这样写的。他会据此推断玩家怎么看待每个人。
+    var names = list.map(function (x) {
+      return x.note ? (x.note + '（真名：' + x.name + '）') : x.name;
+    });
+    // 玩家给「查手机的这个角色本人」起的备注 —— 他第一时间看到的就是这个
+    var myNote = (c && c.note) ? String(c.note).trim() : '';
+    // 备注这茬只在第一次翻手机时新鲜；之后只在玩家改过备注时才会被重新注意到
+    var nowNotes = currentNotes(pk.charId, list);
+    var noteState = diffNotes(pk.noteSnap, nowNotes, list);
     var seenLines = Object.keys(pk.seen).map(function (k) { return pk.seen[k]; });
     // 朋友圈里能点开主页的人 + 他和这些人的关系
     var mc = momentCharsOf().filter(function (x) { return x.charId !== pk.charId; });
@@ -60969,6 +61108,8 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       charName: (c && c.name) || 'ta',
       persona: String((c && c.persona) || '').slice(0, 300),
       meName: me,
+      myNote: myNote,
+      noteState: noteState,
       contacts: names,
       relLines: relLines,
       momentChars: mcLines,
@@ -60984,6 +61125,11 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
       '就像真人一样：你决定自己想看什么、想对谁下手，一步一步来。\n' +
       '你没有失忆——上面写的人设、你和对方的关系、你认识的所有人、你记得的所有事，此刻全部照旧有效。\n' +
       '手机里翻到的人，只要在你的人际关系里出现过，你就是认识的，绝对不要说"这谁啊""这又是谁"。\n' +
+      // ---- 备注：活人感的关键一层，但只在「第一次」或「备注被改过」时才提 ----
+      // 通讯录里显示的是玩家起的备注，不是真名。
+      // 第一次翻手机他会盯着自己被存成什么发挥；之后他早就知道了，不该每次重新惊讶一遍。
+      // 但只要玩家中途改了备注，他会当场发现并质问/在意。
+      noteHint(ctx) +
       '这台手机（' + ctx.meName + '这个身份下）通讯录里的人有：' + (ctx.contacts.length ? ctx.contacts.join('、') : '（没有别人）') + '。\n' +
       (ctx.relLines && ctx.relLines.length ? ('你和这些人本来就有关系（按你的人设）：\n' + ctx.relLines.join('\n') + '\n') : '') +
       (ctx.momentChars.length ? ('朋友圈里能点开主页的人：' + ctx.momentChars.join('；') + '。\n') : '') +
@@ -61230,6 +61376,48 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
     } catch (e) { return []; }
   }
 
+  // ---------- 备注记忆：备注这茬只在第一次翻手机时惊讶一次 ----------
+  // 第一次查手机时他会盯着「自己被存成什么」发挥；但第二、第三次就该像真人一样
+  // 不再重新惊讶一遍——他早就知道了。除非玩家中途把备注改了，那他会当场发现。
+  // 做法：每次查完手机把当时看到的备注存一份快照，下次进来比对差异。
+  var NOTE_SNAP_KEY = 'peek_note_snap_v1';
+  function noteSnapAll() {
+    try { var o = JSON.parse(localStorage.getItem(NOTE_SNAP_KEY) || '{}'); return (o && typeof o === 'object') ? o : {}; }
+    catch (e) { return {}; }
+  }
+  function noteSnapOf(charId) {
+    var o = noteSnapAll()[charId];
+    return (o && typeof o === 'object') ? o : null;
+  }
+  function saveNoteSnap(charId, snap) {
+    try {
+      var all = noteSnapAll();
+      all[charId] = snap;
+      localStorage.setItem(NOTE_SNAP_KEY, JSON.stringify(all));
+    } catch (e) {}
+  }
+  // 当前这台手机上的备注现状：{ mine:'老公', others:{ charId: '备注' } }
+  function currentNotes(peekCharId, list) {
+    var self = getChar(peekCharId);
+    var others = {};
+    (list || []).forEach(function (x) { others[x.charId] = x.note || ''; });
+    return { mine: (self && self.note) ? String(self.note).trim() : '', others: others };
+  }
+  // 和上次快照比对，算出这一轮备注要怎么讲
+  function diffNotes(snap, now, list) {
+    var st = { first: !snap, myNote: now.mine, myChanged: false, myOld: '', changed: [] };
+    if (!snap) return st;                      // 第一次：全都是新鲜的
+    var oldMine = String(snap.mine || '');
+    if (oldMine !== now.mine) { st.myChanged = true; st.myOld = oldMine; }
+    var oldOthers = (snap.others && typeof snap.others === 'object') ? snap.others : {};
+    (list || []).forEach(function (x) {
+      var was = String(oldOthers[x.charId] == null ? '' : oldOthers[x.charId]);
+      var isNow = x.note || '';
+      if (was !== isNow) st.changed.push({ name: x.name, from: was, to: isNow });
+    });
+    return st;
+  }
+
   // ---------- 起止 ----------
   function startPeek(char) {
     if (!char) return;
@@ -61237,6 +61425,8 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
     pk = { charId: char.id, userId: boundUserId(char), msgs: [], reclaimTries: 0, seen: {}, busy: false, ended: false, steps: 0 };
     pk.offline = isOfflineNow(char);      // 线下当面 → 允许动作/神态描写
     pk.mem = memTailOf(char.id);          // 他记得之前发生过什么
+    // 上次翻这台手机时看到的备注长什么样（没有 = 这是第一次）
+    pk.noteSnap = noteSnapOf(char.id);
     try {
       var s = S();
       pk.prevUser = s.currentUserId;
@@ -61309,13 +61499,16 @@ html.phone-night #wxm-sheet .sep,html.phone-dark #wxm-sheet .sep{background:rgba
     window.showModal(
       esc(char.name) + ' 想看看你的手机',
       '<div style="font-size:13.5px;line-height:1.8;color:var(--text-secondary,#6b7178);">' +
-      esc(char.name) + ' 伸手过来，想拿你的手机。<br>同意后 ta 会像真人一样自己翻：进通讯录点开别人的聊天上下滑着看、翻你的朋友圈、点进别人的主页，也能替你发消息、拉黑、删除。你随时可以尝试夺回来（气头上可能夺不动，第三次一定成功）。</div>',
+      esc(char.name) + ' 想看你的手机，你的选择是？</div>',
       '给 ta', function () { startPeek(char); }, true);
   };
 
   function endPeek(reclaimed) {
     if (!pk) return;
     pk.ended = true;
+    // 记下这次看到的备注长什么样：下次再翻同一台手机时，
+    // 备注就不再是新鲜事了，只有被改动过的部分才会被重新注意到。
+    try { saveNoteSnap(pk.charId, currentNotes(pk.charId, contactsOf())); } catch (e) {}
     // 落一条「被查手机记录」，同时写进这个角色的记忆
     try {
       if (window.__peekLogAdd) {
@@ -62526,3 +62719,1156 @@ html.phone-night #wxmcp .cp-date b,html.phone-dark #wxmcp .cp-date b{color:#e7e9
   else setTimeout(boot, 1200);
 })();
 </script>
+
+<!-- ============ 小手机 v6-62：推特帖子改存 IndexedDB + 发图压缩 ============ -->
+<!--
+  三个症状同一个根：推特帖子流存在 localStorage 的 tw_posts_v1 里，
+  帖子配图是整段 base64 dataURL，一张几百 KB，几十条就吃满 ~5MB 配额。
+
+  一、配额满 → 发帖/转推/回帖弹「存不下了」。
+  二、配额满 → applyPosts 里 savePosts 失败但角色记忆已经写了，
+      于是「角色记忆里记得自己发过帖，玩家首页一条都没有」。
+      （这处顺序已单独修好：写盘失败就 return，不再写记忆。）
+  三、玩家发的帖刷新就不见了 —— 这才是最阴的一处。
+      v6-53 数据层的 wr() 在配额爆掉时有两段自救代码，都拿 k 和 K.posts 比：
+        if (k !== K.posts) { 腾空间 }
+        if (k === K.acc || k === K.chars || ...) return false;   // 保护名单
+      但帖子是按账号隔离存的，真实键是 tw_posts_v1__<账号id>，
+      永远不等于 K.posts 这个裸键。于是：
+        · 「腾空间」分支去读写了一个空的裸键，一点空间都没腾出来；
+        · 「保护名单」也漏掉了 posts，直接落到最后那段数组腰斩：
+          arr = arr.slice(0, arr.length/2) 反复砍半。
+      帖子已按 ts 降序排过，砍掉的正是玩家和角色的旧帖 —— 刷一次少一半，
+      而且静默无声。
+
+  这里治本：把帖子搬到 IndexedDB（几百 MB），完全绕开 wr() 那条配额路径，
+  并保持 posts/savePosts/putPost/getPost 的同步签名不变 ——
+  内存缓存是唯一同步数据源，写操作同步更新内存 + 异步落库。
+  上层业务逻辑一行都不用改。
+  另外把 pickImage 压紧：先限宽，再逐步降质量直到单张 ≤200KB。
+
+  账号隔离沿用原键规则：tw_posts_v1__<账号id>，没有账号时用 tw_posts_v1。
+  首次启动把 localStorage 里所有 tw_posts_v1* 迁进 IndexedDB 再删掉，腾出配额。
+-->
+<script id="twPostsIdbJs">
+(function () {
+  'use strict';
+
+  var BASE = 'tw_posts_v1';
+  var DBNAME = 'twStore_v1';
+  var STORE = 'kv';
+  var NPC_KEEP = 60;                  // npc/陌生人旧帖上限；玩家帖和角色帖永久保留
+  var IMG_MAX_BYTES = 200 * 1024;
+
+  var mem = {};                       // key -> 帖子数组（唯一同步数据源）
+  var idbOk = false;
+  var dbp = null;
+
+  // ---------- IndexedDB ----------
+  function openDB() {
+    if (dbp) return dbp;
+    dbp = new Promise(function (res) {
+      var rq;
+      try { rq = indexedDB.open(DBNAME, 1); } catch (e) { return res(null); }
+      rq.onupgradeneeded = function () {
+        try {
+          var d = rq.result;
+          if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+        } catch (e) {}
+      };
+      rq.onsuccess = function () { idbOk = true; res(rq.result); };
+      rq.onerror = function () { res(null); };
+      rq.onblocked = function () { res(null); };
+    });
+    return dbp;
+  }
+  function idbAll() {
+    return openDB().then(function (db) {
+      return new Promise(function (res) {
+        if (!db) return res({});
+        var out = {};
+        try {
+          var rq = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor();
+          rq.onsuccess = function () {
+            var c = rq.result;
+            if (c) { out[c.key] = c.value; c.continue(); } else res(out);
+          };
+          rq.onerror = function () { res(out); };
+        } catch (e) { res(out); }
+      });
+    });
+  }
+  function idbPut(k, v) {
+    return openDB().then(function (db) {
+      if (!db) return false;
+      try { db.transaction(STORE, 'readwrite').objectStore(STORE).put(v, k); return true; }
+      catch (e) { return false; }
+    });
+  }
+
+  // ---------- 键：和原来的账号隔离规则保持一致 ----------
+  function pkey(T) {
+    var id = '';
+    try { var a = T.curAcc && T.curAcc(); id = (a && a.id) || ''; } catch (e) {}
+    return id ? (BASE + '__' + id) : BASE;
+  }
+  function byTs(x, y) { return ((y && y.ts) || 0) - ((x && x.ts) || 0); }
+  function isKeep(p) { return !!p && (p.authorType === 'me' || p.authorType === 'char'); }
+
+  // ---------- 迁移：localStorage → IndexedDB，搬完删键腾配额 ----------
+  function migrate() {
+    var keys = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(BASE) === 0) keys.push(k);
+      }
+    } catch (e) {}
+    keys.forEach(function (k) {
+      try {
+        var raw = localStorage.getItem(k);
+        var v = raw ? JSON.parse(raw) : null;
+        if (Array.isArray(v) && v.length) {
+          var cur = Array.isArray(mem[k]) ? mem[k].slice(0) : [];
+          var seen = {};
+          cur.forEach(function (p) { if (p && p.id) seen[p.id] = 1; });
+          v.forEach(function (p) { if (p && p.id && !seen[p.id]) { cur.push(p); seen[p.id] = 1; } });
+          mem[k] = cur.sort(byTs);
+          idbPut(k, mem[k]);
+        }
+        localStorage.removeItem(k);
+      } catch (e) {}
+    });
+  }
+
+  // ---------- 接管数据层 ----------
+  function install(T) {
+    function readPosts() {
+      var a = mem[pkey(T)];
+      return Array.isArray(a) ? a.slice(0) : [];
+    }
+    function writePosts(a) {
+      a = (Array.isArray(a) ? a : []).filter(Boolean);
+      var keep = a.filter(isKeep);
+      var npc = a.filter(function (p) { return !isKeep(p); }).sort(byTs).slice(0, NPC_KEEP);
+      var out = keep.concat(npc).sort(byTs);
+      var k = pkey(T);
+      mem[k] = out;
+      if (idbOk) { idbPut(k, out); return true; }
+      // IndexedDB 不可用（极老内核 / 隐私模式）才退回 localStorage
+      try { localStorage.setItem(k, JSON.stringify(out)); return true; }
+      catch (e) { return false; }
+    }
+
+    T.posts = readPosts;
+    T.savePosts = writePosts;
+    T.getPost = function (id) {
+      var l = readPosts();
+      for (var i = 0; i < l.length; i++) if (l[i] && l[i].id === id) return l[i];
+      return null;
+    };
+    T.putPost = function (p) {
+      if (!p) return false;
+      var list = readPosts(), i = -1;
+      list.forEach(function (x, k) { if (x && x.id === p.id) i = k; });
+      if (i >= 0) list[i] = p; else list.unshift(p);
+      return writePosts(list);
+    };
+    T.__postsInIdb = true;
+
+    // ---------- 发图压缩：限宽 + 逐步降质量，单张压到 200KB 以内 ----------
+    T.pickImage = function (maxW, cb) {
+      var inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = 'image/*'; inp.style.display = 'none';
+      document.body.appendChild(inp);
+      inp.addEventListener('change', function () {
+        var f = inp.files && inp.files[0];
+        try { inp.remove(); } catch (e) {}
+        if (!f) return;
+        var r = new FileReader();
+        r.onload = function (ev) {
+          var img = new Image();
+          img.onload = function () {
+            try {
+              var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+              var lim = Math.min(Number(maxW) || 1080, 1280);
+              var sc = Math.min(1, lim / Math.max(1, w));
+              var cv = document.createElement('canvas');
+              cv.width = Math.max(1, Math.round(w * sc));
+              cv.height = Math.max(1, Math.round(h * sc));
+              cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+              var q = 0.82, url = cv.toDataURL('image/jpeg', q);
+              // dataURL 长度 × 0.75 ≈ 实际字节数
+              while (url.length * 0.75 > IMG_MAX_BYTES && q > 0.42) {
+                q -= 0.1;
+                url = cv.toDataURL('image/jpeg', q);
+              }
+              if (url.length * 0.75 > IMG_MAX_BYTES && cv.width > 480) {
+                var cv2 = document.createElement('canvas');
+                cv2.width = Math.round(cv.width * 0.7);
+                cv2.height = Math.max(1, Math.round(cv.height * 0.7));
+                cv2.getContext('2d').drawImage(img, 0, 0, cv2.width, cv2.height);
+                url = cv2.toDataURL('image/jpeg', 0.7);
+              }
+              cb(url);
+            } catch (e) { cb(ev.target.result); }
+          };
+          img.onerror = function () { cb(ev.target.result); };
+          img.src = ev.target.result;
+        };
+        r.readAsDataURL(f);
+      });
+      inp.click();
+    };
+  }
+
+  function boot() {
+    var T = window.__tw;
+    if (!T) { setTimeout(boot, 400); return; }
+    if (window.__twPostsIdb) return; window.__twPostsIdb = true;
+
+    function done() {
+      migrate();
+      install(T);
+      // 首屏可能已用空列表画过一次，装好后重画
+      try { window.__twRender && window.__twRender(); } catch (e) {}
+    }
+    idbAll().then(function (rows) {
+      Object.keys(rows || {}).forEach(function (k) {
+        if (k.indexOf(BASE) === 0 && Array.isArray(rows[k])) mem[k] = rows[k];
+      });
+      done();
+    }).catch(done);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 800); });
+  else setTimeout(boot, 800);
+})();
+</script>
+
+<!-- ============ 小手机 v6-63：给所有独立 API 弹窗自动补「拉取模型」按钮 ============ -->
+<!--
+  症状：只有论坛的 API 弹窗有「拉取」按钮，推特、书城、乐评、日历、小说这些
+  带独立 API 的模块都只能手打模型名。
+
+  原因：每个模块的 API 弹窗都各自拼 HTML，只有论坛那份（v5-53）单独写了
+  fApiFetch 按钮和拉取逻辑，其他模块从来没补上。
+
+  与其去五六处分别加，这里做一个通用补丁：监听弹窗出现，凡是看到 id 以
+  ApiModel 结尾的输入框，并且能找到同前缀的 ApiUrl / ApiKey，就自动在它后面
+  插一个「拉取」按钮 + 下拉 + 行内提示。以后新模块只要沿用同样的命名
+  （xxApiUrl / xxApiKey / xxApiModel），也会自动获得这个按钮。
+
+  两个坑都是论坛那份踩过的：
+  1) 拉取结果只写进弹窗内的提示区，绝不调用 showModal —— 否则会顶掉当前弹窗；
+  2) 按钮 type="button" 并阻止冒泡，避免触发弹窗的保存/关闭。
+-->
+<script id="apiFetchModelsUniversalJs">
+(function () {
+  'use strict';
+
+  var MARK = 'data-fetch-models-added';
+
+  function findPanel(el) {
+    var p = el;
+    for (var i = 0; i < 8 && p; i++) {
+      p = p.parentElement;
+      if (!p) break;
+      if (p.className && /modal|dialog|sheet|popup/i.test(String(p.className))) return p;
+    }
+    return document;
+  }
+
+  // 按前缀找兄弟字段：twApiModel → twApiUrl / twApiKey
+  function siblingField(scope, modelId, suffix) {
+    var prefix = modelId.replace(/Model$/i, '');
+    var byId = document.getElementById(prefix + suffix);
+    if (byId) return byId;
+    var q = (scope && scope.querySelectorAll)
+      ? scope.querySelectorAll('input[id$="' + suffix + '"]') : [];
+    return q.length ? q[0] : null;
+  }
+
+  async function fetchModels(url, key) {
+    url = String(url || '').trim().replace(/\/+$/, '');
+    var cands = /\/v1$/.test(url) ? [url] : [url, url + '/v1'];
+    for (var i = 0; i < cands.length; i++) {
+      try {
+        var res = await fetch(cands[i] + '/models', {
+          headers: { 'Authorization': 'Bearer ' + key }
+        });
+        if (!res.ok) continue;
+        var d = await res.json();
+        var list = d.data || d.models || [];
+        if (list && list.length) {
+          return list.map(function (m) {
+            return String((m && (m.id || m.name)) || m || '');
+          }).filter(Boolean);
+        }
+      } catch (e) {}
+    }
+    return [];
+  }
+
+  function attach(modelInput) {
+    if (!modelInput || modelInput.getAttribute(MARK)) return;
+    var id = modelInput.id || '';
+    if (!/Api_?Model$/i.test(id)) return;
+    if (modelInput.tagName !== 'INPUT') return;
+
+    var scope = findPanel(modelInput);
+    var urlInput = siblingField(scope, id, 'Url');
+    var keyInput = siblingField(scope, id, 'Key');
+    if (!urlInput || !keyInput) return;      // 不是「独立 API」那组字段，不碰
+
+    modelInput.setAttribute(MARK, '1');
+    var host = modelInput.parentElement;
+    if (!host) return;
+
+    var row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.gap = '8px';
+    row.style.alignItems = 'center';
+    host.insertBefore(row, modelInput);
+    row.appendChild(modelInput);
+    modelInput.style.flex = '1';
+    modelInput.style.minWidth = '0';
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-secondary';
+    btn.textContent = '拉取';
+    btn.style.flexShrink = '0';
+    btn.style.padding = '8px 12px';
+    row.appendChild(btn);
+
+    var sel = document.createElement('select');
+    sel.style.marginTop = '6px';
+    sel.style.display = 'none';
+    sel.style.width = '100%';
+    host.insertBefore(sel, row.nextSibling);
+
+    var tip = document.createElement('div');
+    tip.style.fontSize = '12px';
+    tip.style.color = '#9aa4ac';
+    tip.style.marginTop = '6px';
+    tip.style.lineHeight = '1.5';
+    host.insertBefore(tip, sel.nextSibling);
+
+    function setTip(msg, color) {
+      tip.textContent = msg || '';
+      tip.style.color = color || '#9aa4ac';
+    }
+
+    sel.addEventListener('change', function () {
+      if (sel.value) modelInput.value = sel.value;
+    });
+
+    btn.addEventListener('click', async function (ev) {
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+      var url = (urlInput.value || '').trim();
+      var key = (keyInput.value || '').trim();
+      if (!url || !key) { setTip('请先填接口地址和密钥', '#e5484d'); return; }
+      btn.textContent = '拉取中'; btn.disabled = true;
+      setTip('正在拉取模型列表…');
+      try {
+        var models = await fetchModels(url, key);
+        if (models.length) {
+          sel.style.display = 'block';
+          sel.innerHTML = models.map(function (m) {
+            return '<option value="' + m.replace(/"/g, '&quot;') + '">' + m + '</option>';
+          }).join('');
+          var cur = (modelInput.value || '').trim();
+          if (cur && models.indexOf(cur) >= 0) sel.value = cur;
+          else modelInput.value = models[0];
+          setTip('拉到 ' + models.length + ' 个模型，在下拉里选一个', '#2e7d5b');
+        } else {
+          setTip('没拉到模型，可以直接在上面手填模型名', '#e5484d');
+        }
+      } catch (e) {
+        setTip('拉取失败：' + ((e && e.message) || e), '#e5484d');
+      } finally {
+        btn.textContent = '拉取'; btn.disabled = false;
+      }
+    });
+  }
+
+  function scan() {
+    try {
+      var list = document.querySelectorAll('input[id$="ApiModel"], input[id$="apiModel"]');
+      for (var i = 0; i < list.length; i++) attach(list[i]);
+    } catch (e) {}
+  }
+
+  function boot() {
+    scan();
+    // 弹窗是动态插入的，靠 MutationObserver 补按钮
+    try {
+      var mo = new MutationObserver(function () { scan(); });
+      mo.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {
+      setInterval(scan, 1200);
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 1000); });
+  else setTimeout(boot, 1000);
+})();
+</script>
+
+<!-- ============ 小手机 v6-65：通讯录显示角色备注 ============ -->
+<!--
+  备注（人设编辑里的「备注」字段，存在 char.note）原来只出现在人设列表，
+  通讯录完全看不到，等于写了白写。现在按微信的做法：
+  有备注就把备注当主名字显示，真名缩成后面一行小字。
+
+  聊天列表那份渲染在 v5-7 的 chatItem() 里（已改），这里只补样式，
+  并保证别的补丁重画列表后样式仍然生效。
+-->
+<style id="contactNoteCss">
+  /* 通讯录条目里的真名小字：跟在备注后面，弱化显示 */
+  #chatListContainer .chat-item .name .ci-realname {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-secondary, #9aa4ac);
+    margin-left: 6px;
+    opacity: 0.85;
+  }
+  /* 名字行本身可能被别的皮肤设成 flex，保证小字不被挤掉 */
+  #chatListContainer .chat-item .name {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>
+
+<!-- ============ 小手机 v6-66：文字描述的图片 → 渲染成照片，点开看描述 ============ -->
+<!--
+  症状：角色（或玩家）用文字描述一张图片时，这条消息经常直接变成普通文字气泡
+  「[图片] 天边一片橙紫色的云」，看着就像角色在说话，完全没有"发了张照片"的样子。
+
+  根因有两层，都在补丁链里：
+   1. commitCharLine 链上，v5-14 / v5-16 / 本体在「画图 API 未启用或生图失败」时，
+      一律 return { type:'text', content:'[图片] '+desc } —— 类型被降级成 text，
+      后面所有按 type==='image' 判断的渲染层就都不认它了。
+   2. v5-90 又把「type=image 但没有 imageUrl」的消息替换成 systip「图片失败」，
+      连描述都一起丢掉。
+  v5-93 的 buildDescImg 只在极少数漏网情况下生效，且样式是一张平铺文字的横条卡。
+
+  这一层加载最晚 = 包装链最外层，做两件事：
+   A. commitCharLine：自己先认 [图片: 描述]。没开画图 / 生图失败时，
+      落成 { type:'image', content:描述, imageUrl:null, descOnly:true }，
+      保住 image 类型和描述文字，不再降级成 text、也不再被换成"图片失败"。
+   B. createMsgElement：无真图但有描述的 image 消息，渲染成一张真正的照片缩略图
+      （方形、圆角、相机线稿图标、底部一行描述预览），点开弹出全屏查看，
+      里面才是完整的文字描述。玩家自己「用文字描述一张图片」发出去的也走同一套。
+
+  头像 / 群昵称 / 长按菜单 / 多选这些不重复造：先让下层渲染出正常气壳，
+  再把气泡内容替换成照片卡，这样任何皮肤补丁的外壳逻辑都不会被绕过。
+-->
+<style id="phoneV666Css">
+  /* 承载照片卡的气泡：去掉气泡自身的底色，让照片自己撑场 */
+  .msg-bubble.pd-bubble {
+    background: transparent !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  .pd-photo {
+    position: relative;
+    width: 158px;
+    height: 158px;
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    background: linear-gradient(150deg, #cfd8de 0%, #b9c5cd 48%, #a8b6c0 100%);
+    display: block;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* 假想的地平线，让方块看着像一张风景照而不是灰块 */
+  .pd-photo::after {
+    content: '';
+    position: absolute;
+    left: -10%;
+    right: -10%;
+    bottom: 34px;
+    height: 46px;
+    background: rgba(255, 255, 255, 0.16);
+    transform: rotate(-4deg);
+  }
+  .pd-photo .pd-ic {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -62%);
+    width: 40px;
+    height: 40px;
+    opacity: 0.72;
+    z-index: 1;
+  }
+  .pd-photo .pd-ic svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: #fff;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  /* 底部描述预览条：只露一行，像相册里的图注 */
+  .pd-photo .pd-cap {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    padding: 7px 9px 8px;
+    font-size: 11.5px;
+    line-height: 1.35;
+    color: #fff;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.52), rgba(0, 0, 0, 0));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* 全屏查看层 */
+  .pd-view {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.88);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 34px 26px;
+    box-sizing: border-box;
+    animation: pdFade 0.16s ease;
+  }
+  @keyframes pdFade { from { opacity: 0; } to { opacity: 1; } }
+  .pd-view .pd-sheet {
+    width: 100%;
+    max-width: 300px;
+    max-height: 100%;
+    overflow-y: auto;
+    border-radius: 14px;
+    background: linear-gradient(150deg, #cfd8de 0%, #b9c5cd 48%, #a8b6c0 100%);
+    padding: 20px 18px;
+    box-sizing: border-box;
+  }
+  .pd-view .pd-sheet .pd-vic {
+    width: 34px;
+    height: 34px;
+    margin: 0 auto 14px;
+    opacity: 0.8;
+  }
+  .pd-view .pd-sheet .pd-vic svg {
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: #fff;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .pd-view .pd-sheet .pd-vtext {
+    font-size: 14.5px;
+    line-height: 1.75;
+    color: #23282c;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 10px;
+    padding: 13px 14px;
+  }
+</style>
+<script id="phoneV666Js">
+(function () {
+  var ICON = '<svg viewBox="0 0 24 24"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1.1-1.8h8.4L17.3 7h2.2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/><circle cx="12" cy="12.6" r="3.4"/></svg>';
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  // 只有真能显示的链接才算"有图"
+  function realImg(u) {
+    if (typeof u !== 'string') return false;
+    u = u.trim();
+    if (!u) return false;
+    if (u.indexOf('data:image') === 0) return true;
+    if (u.indexOf('http://') === 0 || u.indexOf('https://') === 0) return true;
+    return false;
+  }
+
+  // 一条消息是不是"用文字描述的图片"
+  function isDescPhoto(msg) {
+    if (!msg || msg.type !== 'image' || msg.isSticker) return false;
+    if (realImg(msg.imageUrl)) return false;
+    return typeof msg.content === 'string' && !!msg.content.trim();
+  }
+
+  // 描述文本清洗：把历史遗留的 "[图片] xxx" / "[图片：xxx]" 前缀剥掉
+  function pureDesc(t) {
+    var s = String(t || '').trim();
+    s = s.replace(/^\[图片[:：]?\s*/, '').replace(/\]$/, '');
+    s = s.replace(/^［配图[:：]?\s*/, '').replace(/］$/, '');
+    return s.trim();
+  }
+
+  function openViewer(desc) {
+    var old = document.querySelector('.pd-view');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var v = document.createElement('div');
+    v.className = 'pd-view';
+    v.innerHTML = '<div class="pd-sheet"><div class="pd-vic">' + ICON + '</div>' +
+      '<div class="pd-vtext">' + esc(desc) + '</div></div>';
+    v.addEventListener('click', function () {
+      if (v.parentNode) v.parentNode.removeChild(v);
+    });
+    document.body.appendChild(v);
+  }
+
+  function buildPhotoCard(desc) {
+    var box = document.createElement('div');
+    box.className = 'pd-photo';
+    box.setAttribute('role', 'button');
+    box.setAttribute('tabindex', '0');
+    box.setAttribute('aria-label', '图片，点开查看描述：' + desc);
+    box.innerHTML = '<div class="pd-ic">' + ICON + '</div>' +
+      '<div class="pd-cap">' + esc(desc) + '</div>';
+    return box;
+  }
+
+  function boot() {
+    if (!window.__state || typeof window.createMsgElement !== 'function') { setTimeout(boot, 500); return; }
+    if (window.__v666) return; window.__v666 = true;
+    var S = function () { return window.__state; };
+    function uid() {
+      return window.uid ? window.uid() : (Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7));
+    }
+
+    // ---------- A. 渲染：无真图 + 有描述 → 照片卡 ----------
+    var prevCreate = window.createMsgElement;
+    window.createMsgElement = function (msg) {
+      if (!isDescPhoto(msg)) return prevCreate.apply(this, arguments);
+      var desc = pureDesc(msg.content);
+      if (!desc) return prevCreate.apply(this, arguments);
+      try {
+        // 借下层渲染出正常气壳（头像、群昵称、长按菜单、多选都保留），再换掉气泡内容
+        var shell = {};
+        for (var k in msg) if (Object.prototype.hasOwnProperty.call(msg, k)) shell[k] = msg[k];
+        shell.type = 'text';
+        shell.content = desc;
+        var el = prevCreate(shell);
+        if (!el) return el;
+        var bubble = (el.classList && el.classList.contains('msg-bubble')) ? el : el.querySelector('.msg-bubble');
+        if (!bubble) return el;
+        bubble.classList.add('pd-bubble');
+        bubble.classList.remove('bubble-sticker');
+        bubble.innerHTML = '';
+        var card = buildPhotoCard(desc);
+        card.addEventListener('click', function (e) {
+          if (S().isMultiSelect) return;   // 多选时把点击让给外层选择
+          e.stopPropagation();
+          openViewer(desc);
+        });
+        card.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openViewer(desc); }
+        });
+        bubble.appendChild(card);
+        return el;
+      } catch (e) {
+        return prevCreate.apply(this, arguments);
+      }
+    };
+
+    // ---------- B. 落库：角色发的文字描述图，别再降级成 text ----------
+    if (typeof window.commitCharLine === 'function') {
+      var prevCommit = window.commitCharLine;
+      window.commitCharLine = async function (chatId, char, line, ts) {
+        var s = String(line == null ? '' : line).trim();
+        var m = s.match(/\[图片[:：]\s*([\s\S]+?)\]\s*$/);
+        var desc = m ? pureDesc(m[1]) : '';
+
+        function descMsg() {
+          return {
+            id: uid(), chatId: chatId, sender: 'ai', type: 'image',
+            content: desc, imageUrl: null, descOnly: true,
+            timestamp: ts, charId: char && char.id
+          };
+        }
+
+        // 没开画图：直接落成描述图，不进生图链，也不会被 v5-90 换成"图片失败"
+        if (desc && !(window.__drawEnabled && window.__drawEnabled())) return descMsg();
+
+        var msg = await prevCommit.call(this, chatId, char, line, ts);
+        if (!desc || !msg) return msg;
+        try {
+          // 生图失败时下层会退化成 text '[图片] xxx' / '⚠️ 图片生成失败' 或 systip '图片失败'，
+          // 这几种都还原成描述图，保住"发了张照片"的形态和描述内容
+          var failedText = msg.type === 'text' && /^\s*(\[图片\]|⚠️\s*图片生成失败)/.test(String(msg.content || ''));
+          var failedTip = msg.type === 'systip' && /^图片(失败|没能发出来)/.test(String(msg.content || '').trim());
+          var emptyImg = msg.type === 'image' && !msg.isSticker && !realImg(msg.imageUrl);
+          if (failedText || failedTip || emptyImg) {
+            var out = descMsg();
+            out.id = msg.id || out.id;
+            out.timestamp = msg.timestamp || out.timestamp;
+            return out;
+          }
+        } catch (e) {}
+        return msg;
+      };
+    }
+
+    // ---------- C. 玩家侧：文字描述发图，确保带上 descOnly 标记 ----------
+    if (typeof window.sendMessage === 'function' && !window.sendMessage.__pd666) {
+      var prevSend = window.sendMessage;
+      var wrappedSend = function (content, type, extra) {
+        if (type === 'image' && extra && extra.descOnly && !extra.imageUrl) {
+          extra = Object.assign({}, extra, { imageUrl: null, descOnly: true });
+        }
+        return prevSend.call(this, content, type, extra);
+      };
+      wrappedSend.__pd666 = true;
+      window.sendMessage = wrappedSend;
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 600); });
+  else setTimeout(boot, 600);
+})();
+</script>
+
+<!-- ============ 小手机 v6-67：通话开场就承接聊天剧情（语音/视频、来电/去电都算） ============ -->
+<!--
+  症状：角色打来语音/视频，玩家接通后，角色开场那句是凭空的，跟刚才微信里聊的事没关系；
+  等玩家在通话里回一句，角色才开始接剧情。
+
+  根因有三处，都在通话链路上：
+
+  1) v6-38 的「通话来龙去脉」上下文块，判断条件写的是 VC.session，
+     而那个 VC 就是 window.__vc（视频）。语音通话用的是另一个模块
+     window.__voiceCall，它有 session 时 __vc.session 仍是 null
+     —— 于是语音通话从头到尾拿不到任何聊天上下文，只能靠玩家在通话里说的话反推剧情。
+
+  2) 玩家打过去时，开场第一句来自 judgeAnswer（接不接的判定），
+     它在 enterCall 之前跑，此时还没有 session，v6-38 的上下文块同样注入不到；
+     它自己只塞了最近 8 条 text 消息，图片/语音/转账/通话记录全丢，等于半盲开口。
+
+  3) 角色打来、玩家接通时，开场走的是 charTurn('(通话刚接通，你先开口)')。
+     这句 userInput 太空，模型没有「要接着刚才那段聊天」的明确指令，
+     就算上下文在也容易另起一个话头。
+
+  这一层加载最晚，做三件事：
+   A. 再包一层 buildSystemPrompt：只要「视频或语音」任一有 session，就注入聊天上下文块；
+      若 v6-38 已经注入过（base 里能搜到它的小标题），就跳过，不重复灌。
+   B. 包 charTurn（视频 + 语音两套）：识别出「这是开场第一轮」（transcript 为空或
+      userInput 是那句占位符），把 userInput 换成带最近几条聊天原文 + 明确要求的开场指令。
+   C. 包 judgeAnswer（两套）：接通时丢掉它给的那句 firstLine，
+      让开场统一走上面强化过的 charTurn；拒接时的话照旧保留。
+
+  这些函数在别的补丁里会被反复重接，所以用一个短轮询反复确认包装还在（带标记防重复叠加）。
+-->
+<script id="phoneV667Js">
+(function () {
+  'use strict';
+  var OPEN_MARK = '通话刚接通';
+  var V638_MARK = '这通视频通话的来龙去脉';
+  var OUR_MARK = '这通电话之前，你们刚在微信里聊着';
+
+  function S() { return window.__state || {}; }
+  function getChat(id) { return (S().chats || []).find(function (c) { return c.id === id; }); }
+  function getChar(id) { return (S().characters || []).find(function (c) { return c.id === id; }); }
+  function getUser(id) { return (S().users || []).find(function (u) { return u.id === id; }); }
+
+  // 当前是哪一路通话在进行（视频优先，其次语音）
+  function activeCall() {
+    try {
+      if (window.__vc && window.__vc.session) return { kind: 'video', name: '视频通话', session: window.__vc.session };
+      if (window.__voiceCall && window.__voiceCall.session) return { kind: 'voice', name: '语音通话', session: window.__voiceCall.session };
+    } catch (e) {}
+    return null;
+  }
+
+  // 把一条消息压成一行「谁：内容」，各种类型都给出可读形态，别只留纯文本
+  function lineOf(m, char, uname) {
+    var who = m.sender === 'user' ? uname : ((getChar(m.charId) || {}).name || (char && char.name) || '我');
+    var t = m.type, body;
+    if (t === 'text' || !t) body = m.content || '';
+    else if (t === 'vc_sys' || t === 'systip') body = '（' + (m.content || '') + '）';
+    else if (t === 'vc_recap') body = '';                       // 通话记录另有注入，这里不重复
+    else if (t === 'image') body = '[图片]' + (m.content ? ('：' + m.content) : '');
+    else if (t === 'voice') body = '[语音]' + (m.content ? ('：' + m.content) : '');
+    else if (t === 'sticker') body = '[表情]';
+    else if (t === 'transfer') body = '[转账 ¥' + (m.amount || '') + ']' + (m.note ? ('：' + m.note) : '');
+    else if (t === 'redpacket') body = '[红包]' + (m.content ? ('：' + m.content) : '');
+    else if (t === 'share_music') body = '[分享音乐]' + (m.shareTitle || '');
+    else if (t === 'listen_invite') body = '[一起听邀请]' + (m.shareTitle || '');
+    else if (t === 'location') body = '[位置]' + (m.locName || '');
+    else if (t === 'narration') body = '（' + (m.content || '') + '）';
+    else body = m.content || '';
+    if (!body) return '';
+    return who + '：' + body;
+  }
+
+  // 取这个单聊最近的对话原文
+  function recentChat(chatId, char, limit) {
+    try {
+      var chat = getChat(chatId);
+      if (!chat) return '';
+      var uname = (getUser(chat.userId) || {}).name || '对方';
+      var msgs = (S().messages || []).filter(function (m) {
+        return m && m.chatId === chatId && !m.isDeleted && !m.isRecalled && m.type !== 'vc_recap';
+      }).sort(function (a, b) { return a.timestamp - b.timestamp; }).slice(-(limit || 14));
+      return msgs.map(function (m) { return lineOf(m, char, uname); }).filter(Boolean).join('\n');
+    } catch (e) { return ''; }
+  }
+
+  // 最后一条实质消息，用来点名「刚才停在哪」
+  function lastLine(chatId, char) {
+    try {
+      var chat = getChat(chatId);
+      if (!chat) return '';
+      var uname = (getUser(chat.userId) || {}).name || '对方';
+      var msgs = (S().messages || []).filter(function (m) {
+        return m && m.chatId === chatId && !m.isDeleted && !m.isRecalled
+          && m.type !== 'vc_recap' && m.type !== 'vc_sys' && m.type !== 'systip';
+      }).sort(function (a, b) { return a.timestamp - b.timestamp; });
+      for (var i = msgs.length - 1; i >= 0; i--) {
+        var l = lineOf(msgs[i], char, uname);
+        if (l) return l;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  // ---------- A. buildSystemPrompt：语音通话也要拿到聊天上下文 ----------
+  function patchPrompt() {
+    if (typeof window.buildSystemPrompt !== 'function') return;
+    if (window.buildSystemPrompt.__callOpenCtx) return;
+    var prev = window.buildSystemPrompt;
+    var wrapped = function (char, chat, opts) {
+      var base = '';
+      try { base = prev(char, chat, opts) || ''; } catch (e) { base = ''; }
+      try {
+        var a = activeCall();
+        if (!a || !char) return base;
+        if (a.session.charId !== char.id) return base;
+        // v6-38 已经给视频通话注入过，就别再灌一遍
+        if (base.indexOf(V638_MARK) >= 0 || base.indexOf(OUR_MARK) >= 0) return base;
+
+        var vchat = getChat(a.session.chatId) || chat;
+        var uname = (getUser(vchat && vchat.userId) || {}).name || '对方';
+        var initiator = a.session.initiator || window.__vcInitiator || 'user';
+        var who = initiator === 'char'
+          ? ('是【你自己】主动打给 ' + uname + ' 的，对方接了起来。你心里清楚自己为什么想打这通电话，开场和态度要体现出「是我想打的」。')
+          : ('是【' + uname + '】主动打给你的，你接了起来。可以带着「ta怎么突然打来」的心情开口，具体是好奇、惊喜、警惕还是正好也想找ta，看你此刻的状态。');
+        var ctx = recentChat(a.session.chatId, char, 14);
+
+        var block = '\n\n## 📞 ' + OUR_MARK + '（很重要）\n' +
+          '这通' + a.name + who + '\n' +
+          '这不是一段和聊天无关的独立剧情：你和' + uname + '本来就在微信里聊着，这通电话是那段对话的延续。' +
+          '你完整记得之前聊了什么、聊到哪一步、当时什么气氛（开心、暧昧、闹别扭、还在生气……），要带着那个情绪进入通话。\n';
+        if (ctx) {
+          block += '\n### 你们刚刚在微信里的对话（就发生在这通电话之前）\n' + ctx + '\n' +
+            '\n请自然地接着上面这些往下说：可以直接提刚才聊的事、接着那个话题、或就着当时的情绪开口。' +
+            '绝对不要装作什么都没聊过、不要重新自我介绍、不要问已经问过的事。';
+        } else {
+          block += '\n（之前还没聊过什么具体内容，那就按你和ta的关系自然开场。）';
+        }
+        return base + block;
+      } catch (e) { return base; }
+    };
+    wrapped.__callOpenCtx = true;
+    window.buildSystemPrompt = wrapped;
+  }
+
+  // ---------- B. charTurn：开场那一轮，明确要求承接剧情 ----------
+  function openingInput(session, char) {
+    var chatId = session && session.chatId;
+    var chat = getChat(chatId);
+    var uname = (getUser(chat && chat.userId) || {}).name || '对方';
+    var initiator = session && (session.initiator || window.__vcInitiator || 'user');
+    var last = lastLine(chatId, char);
+    var ctx = recentChat(chatId, char, 10);
+
+    var s = '(通话刚接通，现在由你先开口说第一句)\n\n' +
+      '【开场硬性要求】这通电话是你和' + uname + '刚才那段微信聊天的直接延续，不是新剧情。' +
+      '你的第一句话就必须接住刚才聊的事或当时的情绪，不能等对方先提。\n';
+    if (last) s += '刚才聊天停在这一句：' + last + '\n';
+    if (ctx) s += '\n刚才的对话：\n' + ctx + '\n';
+    s += '\n开场请做到：\n' +
+      '1. 第一句就落在刚才那件事/那个情绪上——可以直接追问、接着抱怨、继续调侃、把没说完的话说完。\n' +
+      '2. 不要用「喂」「在吗」「怎么了」「想你了」这种可以套用在任何场合的空开场。\n' +
+      '3. 不要重新自我介绍，不要问已经问过的事，不要假装刚才什么都没聊过。\n';
+    s += initiator === 'char'
+      ? '4. 是你主动打的，所以要让对方听出来你为什么非要打这通电话。\n'
+      : '4. 是对方打给你的，你刚接起来，但你心里清楚刚才聊到哪了，开口就带着那个上下文。\n';
+    return s;
+  }
+
+  function isOpening(session, userInput) {
+    try {
+      var tr = (session && session.transcript) || [];
+      if (!tr.length) return true;                       // 还没有任何一行 = 开场
+      if (String(userInput || '').indexOf(OPEN_MARK) >= 0) return true;
+      return false;
+    } catch (e) { return false; }
+  }
+
+  function patchTurn(aiObj, mod) {
+    if (!aiObj || typeof aiObj.charTurn !== 'function') return;
+    if (aiObj.charTurn.__callOpenCtx) return;
+    var prev = aiObj.charTurn;
+    var wrapped = async function (userInput) {
+      try {
+        var session = mod && mod.session;
+        if (session && isOpening(session, userInput)) {
+          var char = getChar(session.charId);
+          if (char) userInput = openingInput(session, char);
+        }
+      } catch (e) {}
+      return prev.call(this, userInput);
+    };
+    wrapped.__callOpenCtx = true;
+    aiObj.charTurn = wrapped;
+  }
+
+  // ---------- C. judgeAnswer：接通后别用它那句无上下文的开场 ----------
+  function patchJudge(aiObj) {
+    if (!aiObj || typeof aiObj.judgeAnswer !== 'function') return;
+    if (aiObj.judgeAnswer.__callOpenCtx) return;
+    var prev = aiObj.judgeAnswer;
+    var wrapped = async function (charId, chatId) {
+      var r = await prev.call(this, charId, chatId);
+      try {
+        // 接通：清掉 firstLine，让开场统一走带上下文的 charTurn
+        if (r && r.accept) r = { accept: true, line: '' };
+      } catch (e) {}
+      return r;
+    };
+    wrapped.__callOpenCtx = true;
+    aiObj.judgeAnswer = wrapped;
+  }
+
+  function applyAll() {
+    patchPrompt();
+    patchTurn(window.__vcAI, window.__vc);
+    patchTurn(window.__voiceCallAI, window.__voiceCall);
+    patchJudge(window.__vcAI);
+    patchJudge(window.__voiceCallAI);
+  }
+
+  // 这几个函数在别的补丁里会被反复重接，短轮询确认包装还在（有标记，不会叠加）
+  function boot() {
+    applyAll();
+    var n = 0;
+    var iv = setInterval(function () {
+      applyAll();
+      if (++n > 30) clearInterval(iv);
+    }, 800);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 700); });
+  else setTimeout(boot, 700);
+})();
+</script>
+
+<!-- ============ 小手机 v6-70：群聊 ↔ 单聊 记忆完全互通（防失忆） ============
+     问题：
+       · memory-must-read（v6-44）只注入「已总结的记忆条目」。总结默认每 20 条才跑一次，
+         所以刚在单聊里说过的「某某孤儿院」还没被总结，群聊里角色就真读不到 → 失忆。
+       · 群聊聊了很长一段后，早期消息滑出 memoryCount 窗口，也只能靠总结兜，一样会忘。
+       · 「记忆互通」开关默认关闭，勾了还要点「确定」才保存，而且没有任何反馈，
+         看起来就像「点了没用，第二次点才行」。
+     修复：
+       1. 记忆互通默认开启：memorySync 从未设置过的群，启动时一次性迁移为 true；
+          开关勾选即时保存并给明确提示，不用再点确定。
+       2. 新规则 memory-crosslink（走 v6-48 注册表，不再包装 buildSystemPrompt）：
+          - 在群聊里回话 → 额外带上这个角色和玩家单聊的最近 N 条原始聊天记录；
+          - 在单聊里回话 → 额外带上这个角色所在各群的最近 N 条原始聊天记录。
+          N 默认 20，可用 localStorage 'phone_xlink_recent' 调。
+       3. 总结部分不重复注入：单聊/群聊的总结条目已由 memory-must-read（char.id + group_<chatId>）
+          和第 10417 行那层 memorySync 注入，这里只补「还没被总结的原始对话」。 -->
+<script id="phoneMemXLinkJs">
+(function () {
+    var N_KEY = 'phone_xlink_recent';
+
+    function S() { return window.__state || {}; }
+    function recentN() {
+        var n = parseInt(localStorage.getItem(N_KEY) || '20', 10);
+        return (isNaN(n) || n < 1) ? 20 : Math.min(n, 60);
+    }
+    function getChat(id) { return (S().chats || []).find(function (c) { return c.id === id; }); }
+    function getUserName(chat) {
+        var u = (S().users || []).find(function (x) { return x.id === (chat && chat.userId); });
+        return (u && u.name) || '玩家';
+    }
+    function charName(id) {
+        var c = (S().characters || []).find(function (x) { return x.id === id; });
+        return (c && c.name) || '某人';
+    }
+
+    // 把一条消息压成一行可读文本（够角色回忆事实就行，不追求还原样式）
+    function lineOf(m, chat) {
+        if (!m || m.isDeleted || m.isRecalled) return '';
+        var who = (m.sender === 'user') ? getUserName(chat)
+                : (m.sender === 'system' || m.type === 'systip') ? '系统'
+                : charName(m.charId || chat.charId);
+        var body = '';
+        var t = m.type || 'text';
+        if (t === 'text' || t === 'narration' || t === 'systip') body = m.content || '';
+        else if (t === 'image') body = m.content ? ('[图片：' + m.content + ']') : '[图片]';
+        else if (t === 'voice') body = m.content ? ('[语音：' + m.content + ']') : '[语音]';
+        else if (t === 'transfer') body = '[转账 ¥' + (m.amount || 0) + (m.note ? ' ' + m.note : '') + ']';
+        else if (t === 'redpacket') body = '[红包' + (m.rpTotal ? ' ¥' + m.rpTotal : '') + (m.rpNote ? ' ' + m.rpNote : '') + ']';
+        else if (t === 'sticker') body = '[表情]';
+        else if (t === 'share_music') body = '[分享歌曲《' + (m.shareTitle || '') + '》]';
+        else if (t === 'share_article') body = '[分享文章《' + (m.shareTitle || '') + '》]';
+        else if (t === 'grouppay') body = '[群收款' + (m.note ? '：' + m.note : '') + ']';
+        else body = m.content || '';
+        body = String(body).trim();
+        if (!body) return '';
+        if (body.length > 220) body = body.slice(0, 220) + '…';
+        return who + '：' + body;
+    }
+
+    function tailLines(chatId, n) {
+        var chat = getChat(chatId);
+        if (!chat) return [];
+        var msgs = (S().messages || [])
+            .filter(function (m) { return m.chatId === chatId && !m.isDeleted && !m.isRecalled; })
+            .sort(function (a, b) { return (a.timestamp || 0) - (b.timestamp || 0); })
+            .slice(-n);
+        return msgs.map(function (m) { return lineOf(m, chat); }).filter(Boolean);
+    }
+
+    function syncOn(chat) { return !!chat && chat.memorySync !== false; }
+
+    // 这个角色和玩家的单聊（可能有多个身份的会话，全部带上）
+    function soloChatsOf(charId) {
+        return (S().chats || []).filter(function (c) {
+            return c.type !== 'group' && c.charId === charId;
+        });
+    }
+    // 这个角色在的、开着互通的群聊
+    function groupChatsOf(charId) {
+        return (S().chats || []).filter(function (c) {
+            return c.type === 'group' && syncOn(c) && (c.charIds || []).indexOf(charId) >= 0;
+        });
+    }
+
+    // ---------- 1. 提示词规则：补「还没被总结的原始对话」 ----------
+    function registerRule() {
+        if (typeof window.registerPromptRule !== 'function') return false;
+        return window.registerPromptRule({
+            id: 'memory-crosslink',
+            priority: 1,               // 紧跟在 memory-must-read（0）后面
+            position: 'prepend',
+            build: function (ctx) {
+                var char = ctx.char, chat = ctx.chat;
+                if (!char || !chat) return '';
+                // 新建的群没有 memorySync 字段，这里补成默认开，
+                // 顺带让第 10417 行那层「群记忆总结注入」也能生效
+                try { migrateDefaultOn(); } catch (e) {}
+                var n = recentN();
+                var blocks = [];
+
+                if (ctx.isGroup) {
+                    if (!syncOn(chat)) return '';
+                    soloChatsOf(char.id).forEach(function (sc) {
+                        var lines = tailLines(sc.id, n);
+                        if (!lines.length) return;
+                        blocks.push('◆ 你和「' + getUserName(sc) + '」单独聊天的最近 ' + lines.length +
+                            ' 条记录（这些事你都记得，群里聊到时要能接住）：\n' + lines.join('\n'));
+                    });
+                } else {
+                    groupChatsOf(char.id).forEach(function (gc) {
+                        var lines = tailLines(gc.id, n);
+                        if (!lines.length) return;
+                        blocks.push('◆ 群聊「' + (gc.title || '群聊') + '」的最近 ' + lines.length +
+                            ' 条记录（你也在这个群里，群里发生的事你都记得）：\n' + lines.join('\n'));
+                    });
+                }
+
+                if (!blocks.length) return '';
+
+                return '【跨场景记忆·必读·和上面的记忆同等真实】\n' +
+                    '你的单人聊天和群聊是同一段人生，记忆完全互通。下面是还没被总结、但确实发生过的原始对话：\n\n' +
+                    blocks.join('\n\n') + '\n\n' +
+                    '【铁律】\n' +
+                    '1. 上面提到的人名、地名、机构名（比如某某孤儿院、某某医院、某条街）、时间、金额、承诺、称呼，' +
+                    '只能照原样使用，绝对不许换成别的名字，也不许含糊成「那个地方」。\n' +
+                    '2. 不管在单聊还是群聊，只要玩家或别的角色提到上面出现过的事，你必须立刻自然接住，' +
+                    '不许说「我不记得」「你之前没说过」「哪个孤儿院」。\n' +
+                    '3. 关系、称呼、态度要跨场景保持一致：在单聊里你们已经确定的关系，在群里不会突然变回陌生人。\n' +
+                    '4. 只有上面完全没出现过的事才算没发生，不许凭空编造。';
+            }
+        });
+    }
+
+    // ---------- 2. 记忆互通默认开启（一次性迁移历史群聊） ----------
+    function migrateDefaultOn() {
+        var chats = S().chats || [];
+        var changed = 0;
+        chats.forEach(function (c) {
+            if (c.type === 'group' && typeof c.memorySync === 'undefined') {
+                c.memorySync = true;
+                changed++;
+                try { if (window.__db && window.__db.chats) window.__db.chats.put(JSON.parse(JSON.stringify(c))); } catch (e) {}
+            }
+        });
+        return changed;
+    }
+
+    // ---------- 3. 群设置里的开关：默认勾选 + 勾了就即时保存并给反馈 ----------
+    function patchSwitch() {
+        if (typeof window.openGroupSettings !== 'function' || window.__xlinkSwitch) return false;
+        window.__xlinkSwitch = true;
+        var orig = window.openGroupSettings;
+        window.openGroupSettings = function (chatId) {
+            var r = orig.apply(this, arguments);
+            // 排在旧开关(60ms)和重置按钮(130ms)之后再接管
+            setTimeout(function () {
+                var cb = document.getElementById('gpMemSync');
+                var chat = getChat(chatId);
+                if (!cb || !chat) return;
+                cb.checked = syncOn(chat);                 // 默认开
+                if (cb.__xlinkBound) return;
+                cb.__xlinkBound = true;
+                var tipId = 'gpMemSyncTip';
+                var label = cb.closest('label') || cb.parentNode;
+                if (label && !document.getElementById(tipId)) {
+                    var tip = document.createElement('div');
+                    tip.id = tipId;
+                    tip.style.cssText = 'font-size:11.5px;line-height:1.6;margin:4px 2px 0;color:var(--text-secondary);';
+                    tip.textContent = '已开启：群聊和单聊记忆互通（带上全部记忆总结 + 最近 ' + recentN() + ' 条原始聊天记录）';
+                    label.parentNode.insertBefore(tip, label.nextSibling);
+                }
+                cb.addEventListener('change', function () {
+                    var c = getChat(chatId); if (!c) return;
+                    c.memorySync = !!cb.checked;
+                    try { if (window.__db && window.__db.chats) window.__db.chats.put(JSON.parse(JSON.stringify(c))); } catch (e) {}
+                    var tipEl = document.getElementById(tipId);
+                    if (tipEl) {
+                        tipEl.textContent = c.memorySync
+                            ? '✓ 已开启并保存：群聊和单聊记忆互通（全部记忆总结 + 最近 ' + recentN() + ' 条原始聊天记录），不用再点确定'
+                            : '已关闭并保存：这个群的事，角色在单聊里不会再提起';
+                        tipEl.style.color = c.memorySync ? '#3E8E6E' : 'var(--text-secondary)';
+                    }
+                });
+            }, 200);
+            return r;
+        };
+        return true;
+    }
+
+    function boot() {
+        if (!window.__state || typeof window.registerPromptRule !== 'function') { setTimeout(boot, 400); return; }
+        migrateDefaultOn();
+        registerRule();
+        patchSwitch();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(boot, 600); });
+    else setTimeout(boot, 600);
+})();
+</script>
+<!-- ============ v6-70 结束 ============ -->
